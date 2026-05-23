@@ -1450,24 +1450,13 @@ export default function WorldCupPredictionMVP() {
     if (!match) return;
     const nextHome = Math.max(0, Math.floor(homeScore));
     const nextAway = Math.max(0, Math.floor(awayScore));
-    const updatedAt = new Date().toISOString();
     const resultKey = getWorldCupResultKey(match);
-    const [overrideResult, worldCupResult] = await Promise.all([
-      supabase.from("match_overrides").upsert({
-        match_id: matchId,
-        status: "settled",
-        home_score: nextHome,
-        away_score: nextAway,
-        updated_at: updatedAt,
-      }),
-      supabase.from("world_cup_results").upsert({
-        match_no: resultKey,
-        home_score: nextHome,
-        away_score: nextAway,
-        updated_at: updatedAt,
-      }),
-    ]);
-    const error = overrideResult.error || worldCupResult.error;
+    const { error } = await supabase.rpc("admin_set_match_result", {
+      p_match_id: matchId,
+      p_match_no: resultKey,
+      p_home_score: nextHome,
+      p_away_score: nextAway,
+    });
     if (error) {
       setDataError(error.message);
       return;
@@ -1484,11 +1473,10 @@ export default function WorldCupPredictionMVP() {
     const match = matches.find((item) => item.id === matchId);
     if (!match) return;
     const resultKey = getWorldCupResultKey(match);
-    const [overrideResult, worldCupResult] = await Promise.all([
-      supabase.from("match_overrides").delete().eq("match_id", matchId),
-      supabase.from("world_cup_results").delete().eq("match_no", resultKey),
-    ]);
-    const error = overrideResult.error || worldCupResult.error;
+    const { error } = await supabase.rpc("admin_clear_match_result", {
+      p_match_id: matchId,
+      p_match_no: resultKey,
+    });
     if (error) {
       setDataError(error.message);
       return;
@@ -1506,12 +1494,11 @@ export default function WorldCupPredictionMVP() {
     const match = matches.find((item) => item.id === matchId);
     if (!match || match.status === "settled") return;
     const nextStatus = match.status === "open" ? "closed" : "open";
-    const { error } = await supabase.from("match_overrides").upsert({
-      match_id: matchId,
-      status: nextStatus,
-      home_score: match.homeScore,
-      away_score: match.awayScore,
-      updated_at: new Date().toISOString(),
+    const { error } = await supabase.rpc("admin_set_match_lock", {
+      p_match_id: matchId,
+      p_status: nextStatus,
+      p_home_score: match.homeScore,
+      p_away_score: match.awayScore,
     });
     if (error) {
       setDataError(error.message);
@@ -1549,15 +1536,12 @@ export default function WorldCupPredictionMVP() {
 
   async function saveFunResults(nextResults) {
     if (!isAdmin) return;
-    const payload = {
-      id: "main",
-      champion: nextResults.champion || "",
-      golden_boot: nextResults.goldenBoot || "",
-      first_red_card_team: nextResults.firstRedCardTeam || "",
-      total_goals: nextResults.totalGoals === "" ? null : Number(nextResults.totalGoals),
-      updated_at: new Date().toISOString(),
-    };
-    const { error } = await supabase.from("fun_results").upsert(payload);
+    const { error } = await supabase.rpc("admin_save_fun_results", {
+      p_champion: nextResults.champion || "",
+      p_golden_boot: nextResults.goldenBoot || "",
+      p_first_red_card_team: nextResults.firstRedCardTeam || "",
+      p_total_goals: nextResults.totalGoals === "" ? null : Number(nextResults.totalGoals),
+    });
     if (error) {
       setDataError(error.message);
       return;

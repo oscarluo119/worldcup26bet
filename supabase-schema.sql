@@ -79,6 +79,130 @@ as $$
   );
 $$;
 
+create or replace function public.admin_set_match_result(
+  p_match_id text,
+  p_match_no integer,
+  p_home_score integer,
+  p_away_score integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  insert into public.match_overrides (match_id, status, home_score, away_score, updated_at)
+  values (p_match_id, 'settled', greatest(p_home_score, 0), greatest(p_away_score, 0), now())
+  on conflict (match_id) do update
+  set
+    status = excluded.status,
+    home_score = excluded.home_score,
+    away_score = excluded.away_score,
+    updated_at = excluded.updated_at;
+
+  insert into public.world_cup_results (match_no, home_score, away_score, updated_at)
+  values (p_match_no, greatest(p_home_score, 0), greatest(p_away_score, 0), now())
+  on conflict (match_no) do update
+  set
+    home_score = excluded.home_score,
+    away_score = excluded.away_score,
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.admin_set_match_result(text, integer, integer, integer) to authenticated;
+
+create or replace function public.admin_clear_match_result(
+  p_match_id text,
+  p_match_no integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  delete from public.match_overrides
+  where match_id = p_match_id;
+
+  delete from public.world_cup_results
+  where match_no = p_match_no;
+end;
+$$;
+
+grant execute on function public.admin_clear_match_result(text, integer) to authenticated;
+
+create or replace function public.admin_set_match_lock(
+  p_match_id text,
+  p_status text,
+  p_home_score integer,
+  p_away_score integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  if p_status not in ('open', 'closed') then
+    raise exception 'Invalid status: %', p_status;
+  end if;
+
+  insert into public.match_overrides (match_id, status, home_score, away_score, updated_at)
+  values (p_match_id, p_status, p_home_score, p_away_score, now())
+  on conflict (match_id) do update
+  set
+    status = excluded.status,
+    home_score = excluded.home_score,
+    away_score = excluded.away_score,
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.admin_set_match_lock(text, text, integer, integer) to authenticated;
+
+create or replace function public.admin_save_fun_results(
+  p_champion text,
+  p_golden_boot text,
+  p_first_red_card_team text,
+  p_total_goals integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  insert into public.fun_results (id, champion, golden_boot, first_red_card_team, total_goals, updated_at)
+  values ('main', coalesce(p_champion, ''), coalesce(p_golden_boot, ''), coalesce(p_first_red_card_team, ''), p_total_goals, now())
+  on conflict (id) do update
+  set
+    champion = excluded.champion,
+    golden_boot = excluded.golden_boot,
+    first_red_card_team = excluded.first_red_card_team,
+    total_goals = excluded.total_goals,
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.admin_save_fun_results(text, text, text, integer) to authenticated;
+
 drop policy if exists "profiles readable by signed in users" on public.profiles;
 create policy "profiles readable by signed in users"
 on public.profiles for select
