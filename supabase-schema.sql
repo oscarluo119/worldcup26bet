@@ -325,3 +325,214 @@ with check (public.is_admin());
 update public.profiles
 set is_admin = true
 where lower(email) = 'oscarluo119@gmail.com';
+
+create table if not exists public.achievement_definitions (
+  id text primary key,
+  name text not null,
+  description text not null,
+  rarity text not null check (rarity in ('普通', '稀有', '史诗', '传说', '神话')),
+  category text not null,
+  hidden boolean not null default false,
+  target_value integer,
+  metric text not null default 'generic',
+  evaluation_mode text not null default 'derived',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.user_achievements (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  achievement_id text not null references public.achievement_definitions(id) on delete cascade,
+  current_value integer not null default 0,
+  target_value integer not null default 1,
+  achieved boolean not null default false,
+  achieved_at timestamptz,
+  source text not null default 'system',
+  match_id text,
+  snapshot_ref text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, achievement_id)
+);
+
+create table if not exists public.achievement_progress_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  achievement_id text references public.achievement_definitions(id) on delete cascade,
+  match_id text,
+  snapshot_key text not null,
+  snapshot_value integer,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_user_achievements_user_id on public.user_achievements(user_id);
+create index if not exists idx_user_achievements_achievement_id on public.user_achievements(achievement_id);
+create index if not exists idx_achievement_progress_snapshots_user_id on public.achievement_progress_snapshots(user_id);
+create index if not exists idx_achievement_progress_snapshots_match_id on public.achievement_progress_snapshots(match_id);
+
+alter table public.achievement_definitions enable row level security;
+alter table public.user_achievements enable row level security;
+alter table public.achievement_progress_snapshots enable row level security;
+
+drop policy if exists "achievement definitions readable by signed in users" on public.achievement_definitions;
+create policy "achievement definitions readable by signed in users"
+on public.achievement_definitions for select
+to authenticated
+using (true);
+
+drop policy if exists "admins write achievement definitions" on public.achievement_definitions;
+create policy "admins write achievement definitions"
+on public.achievement_definitions for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "user achievements readable by signed in users" on public.user_achievements;
+create policy "user achievements readable by signed in users"
+on public.user_achievements for select
+to authenticated
+using (true);
+
+drop policy if exists "admins write user achievements" on public.user_achievements;
+create policy "admins write user achievements"
+on public.user_achievements for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "achievement snapshots readable by signed in users" on public.achievement_progress_snapshots;
+create policy "achievement snapshots readable by signed in users"
+on public.achievement_progress_snapshots for select
+to authenticated
+using (true);
+
+drop policy if exists "admins write achievement snapshots" on public.achievement_progress_snapshots;
+create policy "admins write achievement snapshots"
+on public.achievement_progress_snapshots for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+create or replace function public.admin_upsert_user_achievement(
+  p_user_id uuid,
+  p_achievement_id text,
+  p_current_value integer,
+  p_target_value integer,
+  p_achieved boolean,
+  p_achieved_at timestamptz,
+  p_match_id text,
+  p_snapshot_ref text,
+  p_source text,
+  p_metadata jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  insert into public.user_achievements (
+    user_id,
+    achievement_id,
+    current_value,
+    target_value,
+    achieved,
+    achieved_at,
+    match_id,
+    snapshot_ref,
+    source,
+    metadata,
+    updated_at
+  )
+  values (
+    p_user_id,
+    p_achievement_id,
+    greatest(coalesce(p_current_value, 0), 0),
+    greatest(coalesce(p_target_value, 1), 1),
+    coalesce(p_achieved, false),
+    p_achieved_at,
+    p_match_id,
+    p_snapshot_ref,
+    coalesce(p_source, 'system'),
+    coalesce(p_metadata, '{}'::jsonb),
+    now()
+  )
+  on conflict (user_id, achievement_id) do update
+  set
+    current_value = excluded.current_value,
+    target_value = excluded.target_value,
+    achieved = excluded.achieved,
+    achieved_at = coalesce(public.user_achievements.achieved_at, excluded.achieved_at),
+    match_id = excluded.match_id,
+    snapshot_ref = excluded.snapshot_ref,
+    source = excluded.source,
+    metadata = excluded.metadata,
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.admin_upsert_user_achievement(uuid, text, integer, integer, boolean, timestamptz, text, text, text, jsonb) to authenticated;
+
+create or replace function public.admin_store_achievement_snapshot(
+  p_user_id uuid,
+  p_achievement_id text,
+  p_match_id text,
+  p_snapshot_key text,
+  p_snapshot_value integer,
+  p_metadata jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  insert into public.achievement_progress_snapshots (
+    user_id,
+    achievement_id,
+    match_id,
+    snapshot_key,
+    snapshot_value,
+    metadata
+  )
+  values (
+    p_user_id,
+    p_achievement_id,
+    p_match_id,
+    p_snapshot_key,
+    p_snapshot_value,
+    coalesce(p_metadata, '{}'::jsonb)
+  );
+end;
+$$;
+
+grant execute on function public.admin_store_achievement_snapshot(uuid, text, text, text, integer, jsonb) to authenticated;
+
+create or replace function public.admin_reset_achievement_state()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  delete from public.achievement_progress_snapshots;
+  delete from public.user_achievements;
+end;
+$$;
+
+grant execute on function public.admin_reset_achievement_state() to authenticated;

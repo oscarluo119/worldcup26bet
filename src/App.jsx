@@ -32,6 +32,13 @@ import {
   YAxis,
 } from "recharts";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import {
+  ACHIEVEMENT_DEFINITIONS,
+  ACHIEVEMENT_RARITIES,
+  buildAchievementCollections,
+  getAchievementBadgeClass,
+  getAchievementTheme,
+} from "./achievements";
 
 const STAGES = {
   GROUP: { label: "小组赛", multiplier: 1 },
@@ -607,22 +614,6 @@ function getDisplayName(user, fallback = "未命名用户") {
   return user?.user_metadata?.username || user?.email?.split("@")[0] || fallback;
 }
 
-const achievements = [
-  { id: "firstPrediction", name: "初登赛场", description: "第一次提交比分竞猜", rarity: "普通", target: 1 },
-  { id: "worldCupAudience", name: "世界杯观众席", description: "累计竞猜 30 场", rarity: "稀有", target: 30 },
-  { id: "hardcoreFan", name: "铁杆球迷", description: "小组赛阶段没有漏猜", rarity: "史诗", target: "GROUP_ALL" },
-  { id: "fullAttendance", name: "全勤观赛员", description: "累计竞猜 104 场", rarity: "传说", target: 104 },
-  { id: "knockoutTicket", name: "淘汰赛入场券", description: "第一次竞猜淘汰赛", rarity: "稀有", target: 1 },
-  { id: "finalWitness", name: "决赛见证者", description: "提交决赛竞猜", rarity: "史诗", target: 1 },
-];
-
-const rarityStyles = {
-  普通: "bg-slate-700 text-slate-200",
-  稀有: "bg-sky-500/15 text-sky-200",
-  史诗: "bg-purple-500/15 text-purple-200",
-  传说: "bg-yellow-500/15 text-yellow-200",
-};
-
 const tabs = [
   { id: "home", label: "首页", icon: Home },
   { id: "schedule", label: "赛程竞猜", icon: CalendarDays },
@@ -784,63 +775,8 @@ function getPlayerTitles(player, funPredictions, funResults, predictionStyleRank
   return [...new Set(titles)];
 }
 
-function getAchievementProgress(achievement, player, predictions, matches) {
-  const playerPredictions = predictions
-    .filter((prediction) => prediction.playerId === player.id)
-    .sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime());
-  const getMatch = (prediction) => matches.find((match) => match.id === prediction.matchId);
-
-  if (achievement.id === "firstPrediction") {
-    const first = playerPredictions[0];
-    return { current: Math.min(playerPredictions.length, 1), target: 1, achieved: playerPredictions.length >= 1, achievedAt: first?.submittedAt || null };
-  }
-
-  if (achievement.id === "worldCupAudience") {
-    const target = 30;
-    return { current: Math.min(playerPredictions.length, target), target, achieved: playerPredictions.length >= target, achievedAt: playerPredictions[target - 1]?.submittedAt || null };
-  }
-
-  if (achievement.id === "hardcoreFan") {
-    const groupMatches = matches.filter((match) => match.stage === "GROUP");
-    const groupMatchIds = new Set(groupMatches.map((match) => match.id));
-    const groupPredictions = playerPredictions.filter((prediction) => groupMatchIds.has(prediction.matchId));
-    const predictedGroupIds = new Set(groupPredictions.map((prediction) => prediction.matchId));
-    const target = groupMatches.length || 1;
-    const achieved = groupMatches.length > 0 && predictedGroupIds.size >= groupMatches.length;
-    const latestGroupPrediction = groupPredictions[groupPredictions.length - 1];
-    return { current: Math.min(predictedGroupIds.size, target), target, achieved, achievedAt: achieved ? latestGroupPrediction?.submittedAt || null : null };
-  }
-
-  if (achievement.id === "fullAttendance") {
-    const target = 104;
-    return { current: Math.min(playerPredictions.length, target), target, achieved: playerPredictions.length >= target, achievedAt: playerPredictions[target - 1]?.submittedAt || null };
-  }
-
-  if (achievement.id === "knockoutTicket") {
-    const knockoutPrediction = playerPredictions.find((prediction) => {
-      const match = getMatch(prediction);
-      return match && match.stage !== "GROUP";
-    });
-    return { current: knockoutPrediction ? 1 : 0, target: 1, achieved: Boolean(knockoutPrediction), achievedAt: knockoutPrediction?.submittedAt || null };
-  }
-
-  if (achievement.id === "finalWitness") {
-    const finalPrediction = playerPredictions.find((prediction) => getMatch(prediction)?.stage === "FINAL");
-    return { current: finalPrediction ? 1 : 0, target: 1, achieved: Boolean(finalPrediction), achievedAt: finalPrediction?.submittedAt || null };
-  }
-
-  return { current: 0, target: 1, achieved: false, achievedAt: null };
-}
-
-function getAchievementRoomProgress(achievement, players, predictions, matches) {
-  return players.map((player) => ({
-    player,
-    progress: getAchievementProgress(achievement, player, predictions, matches),
-  }));
-}
-
 function formatAchievementTime(value) {
-  return value ? formatDateTime(value) : "未获得";
+  return value ? formatDateTime(value) : "--";
 }
 
 function useCurrentTime() {
@@ -1415,6 +1351,15 @@ export default function WorldCupPredictionMVP() {
     };
   }, [players, predictions, matches]);
 
+  const achievementCollections = useMemo(() => buildAchievementCollections({
+    players,
+    currentPlayerId,
+    predictions,
+    matches,
+    funPredictions,
+    funResults,
+  }), [players, currentPlayerId, predictions, matches, funPredictions, funResults]);
+
   const myStats = rankings.find((p) => p.id === currentPlayerId);
   const filteredMatches = useMemo(() => matches.filter((match) => {
     const text = `${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${STAGES[match.stage]?.label || ""}`.toLowerCase();
@@ -1627,10 +1572,10 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatch={selectedMatch} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
-          {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} predictions={predictions} matches={matches} />}
+          {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
           {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} />}
           {activeTab === "rules" && <RulesPanel />}
@@ -2025,7 +1970,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, onUpdateAvatar, onBack, onOpenFullHistory }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, onUpdateAvatar, onBack, onOpenAchievements, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
@@ -2039,11 +1984,12 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   const commonScore = getMostCommonPrediction(playerPredictions);
   const favoriteStyle = drawPredictions === 0 && attackPredictions === 0 ? "暂无明显风格" : drawPredictions >= attackPredictions ? `更喜欢预测平局（${drawPredictions}次）` : `更喜欢大比分（${attackPredictions}次）`;
   const titles = getPlayerTitles(player, funPredictions, funResults, predictionStyleRankings, streakRankings, reverseLightPlayer);
-  const playerAchievementStats = achievements.map((achievement) => {
-    const roomProgress = getAchievementRoomProgress(achievement, players, predictions, matches);
-    const currentPlayerProgress = roomProgress.find((item) => item.player.id === player.id)?.progress || getAchievementProgress(achievement, player, predictions, matches);
-    return { achievement, roomProgress, currentPlayerProgress };
-  });
+  const playerAchievementStats = (achievementCollections?.byPlayerId?.[player.id] || []).map((item) => ({
+    achievement: item.achievement,
+    currentPlayerProgress: item.progress,
+    roomAchievedCount: achievementCollections?.roomCounts?.[item.achievement.id] || 0,
+    roomTotalPlayers: players.length,
+  }));
   const playerUnlockedAchievements = playerAchievementStats.filter((item) => item.currentPlayerProgress.achieved);
   const recentUnlockedAchievements = [...playerUnlockedAchievements]
     .sort((a, b) => new Date(b.currentPlayerProgress.achievedAt || 0).getTime() - new Date(a.currentPlayerProgress.achievedAt || 0).getTime())
@@ -2132,10 +2078,10 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
       <Card>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-xl font-black">成就信息</h3>
-            <p className="text-sm text-slate-400">只展示该玩家最近获得的 5 个成就。</p>
+            <button type="button" onClick={() => onOpenAchievements?.()} className="text-left"><h3 className="text-xl font-black transition hover:text-cyan-200">成就信息</h3></button>
+            <p className="text-sm text-slate-400">点击查看完整成就墙和全部成就进度。</p>
           </div>
-          <Pill className="bg-slate-800 text-slate-300">{playerUnlockedAchievements.length}/{achievements.length}</Pill>
+          <Pill className="bg-slate-800 text-slate-300">{playerUnlockedAchievements.length}/{ACHIEVEMENT_DEFINITIONS.length}</Pill>
         </div>
         <div className="space-y-4">
           <CompactAchievementSection title="最近获得成就" items={recentUnlockedAchievements} emptyText="该玩家暂未获得成就" />
@@ -2169,17 +2115,20 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   );
 }
 
-function AchievementsPanel({ players, currentPlayerId, predictions, matches }) {
+function AchievementsPanel({ players, currentPlayerId, achievementCollections }) {
   const currentPlayer = players.find((player) => player.id === currentPlayerId) || players[0];
-  const achievementStats = achievements.map((achievement) => {
-    const roomProgress = getAchievementRoomProgress(achievement, players, predictions, matches);
-    const currentPlayerProgress = roomProgress.find((item) => item.player.id === currentPlayer?.id)?.progress || getAchievementProgress(achievement, currentPlayer, predictions, matches);
-    return { achievement, roomProgress, currentPlayerProgress };
-  });
+  const [rarityFilter, setRarityFilter] = useState("全部");
+  const achievementStats = achievementCollections?.currentPlayerItems || [];
   const unlocked = achievementStats.filter((item) => item.currentPlayerProgress.achieved);
-  const upcoming = achievementStats
-    .filter((item) => !item.currentPlayerProgress.achieved)
+  const locked = achievementStats.filter((item) => !item.currentPlayerProgress.achieved);
+  const hiddenLocked = locked.filter((item) => item.achievement.hidden);
+  const upcoming = locked
+    .filter((item) => !item.achievement.hidden)
     .sort((a, b) => (b.currentPlayerProgress.current / b.currentPlayerProgress.target) - (a.currentPlayerProgress.current / a.currentPlayerProgress.target));
+  const filteredItems = achievementStats.filter((item) => rarityFilter === "全部" || item.achievement.rarity === rarityFilter);
+  const filteredUnlocked = filteredItems.filter((item) => item.currentPlayerProgress.achieved);
+  const filteredUpcoming = filteredItems.filter((item) => !item.currentPlayerProgress.achieved && !item.achievement.hidden);
+  const filteredHidden = filteredItems.filter((item) => !item.currentPlayerProgress.achieved && item.achievement.hidden);
 
   return (
     <section className="mt-6 space-y-5">
@@ -2188,14 +2137,33 @@ function AchievementsPanel({ players, currentPlayerId, predictions, matches }) {
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><Crown className="h-3.5 w-3.5" /> 成就墙 · 我的成就</div>
             <h2 className="text-3xl font-black tracking-tight">成就墙</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">这里只显示当前玩家自己的成就状态。想查看其他玩家的成就，可以进入对方个人主页。</p>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">这里只显示当前玩家自己的成就状态。隐藏成就未解锁前会以占位卡片展示，解锁后统一切换为钻石风格。</p>
           </div>
-          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">我的成就</div><div className="mt-1 text-3xl font-black">{unlocked.length}/{achievements.length}</div></div>
+          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl">
+            <div className="text-xs font-bold text-slate-400">我的成就</div>
+            <div className="mt-1 text-3xl font-black">{unlocked.length}/{achievementCollections?.totalAchievements || ACHIEVEMENT_DEFINITIONS.length}</div>
+            <div className="mt-2 text-xs text-slate-400">未解锁隐藏成就 {hiddenLocked.length} 个</div>
+          </div>
         </div>
       </Card>
 
-      <AchievementSection title="已获得成就" subtitle={`${currentPlayer?.name || "当前玩家"} 已经点亮的成就`} items={unlocked} emptyText="当前玩家暂未获得成就" />
-      <AchievementSection title="即将达成" subtitle="还未获得的成就会以暗色显示" items={upcoming} emptyText="暂无即将达成的成就" />
+      <Card>
+        <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h3 className="text-xl font-black">成就筛选</h3>
+            <p className="text-sm text-slate-400">按稀有度筛选，同时保留已获得、即将达成和隐藏占位三种状态。</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[ "全部", ...ACHIEVEMENT_RARITIES ].map((rarity) => (
+              <button key={rarity} type="button" onClick={() => setRarityFilter(rarity)} className={`rounded-full px-3 py-1.5 text-xs font-black transition ${rarityFilter === rarity ? "bg-cyan-600 text-cyan-50" : "bg-slate-900 text-slate-300 hover:bg-slate-800"}`}>{rarity}</button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      <AchievementSection title="已获得成就" subtitle={`${currentPlayer?.name || "当前玩家"} 已经点亮的成就`} items={filteredUnlocked} emptyText="当前筛选下暂无已获得成就" />
+      <AchievementSection title="即将达成" subtitle="显示当前筛选下最接近解锁的公开成就" items={filteredUpcoming.sort((a, b) => (b.currentPlayerProgress.current / b.currentPlayerProgress.target) - (a.currentPlayerProgress.current / a.currentPlayerProgress.target))} emptyText="当前筛选下暂无公开未解锁成就" />
+      <AchievementSection title="隐藏成就" subtitle="未解锁前只展示占位卡片，解锁后会切换为钻石风格" items={filteredHidden} emptyText="当前筛选下暂无隐藏成就" />
     </section>
   );
 }
@@ -2227,26 +2195,36 @@ function CompactAchievementSection({ title, items, emptyText }) {
   );
 }
 
-function AchievementCard({ achievement, roomProgress, currentPlayerProgress, compact = false }) {
-  const achievedCount = roomProgress.filter((item) => item.progress.achieved).length;
+function AchievementCard({ achievement, roomAchievedCount, roomTotalPlayers, currentPlayerProgress, compact = false }) {
+  const item = { achievement, currentPlayerProgress };
+  const theme = getAchievementTheme(item);
+  const achievedCount = roomAchievedCount ?? 0;
+  const totalPlayers = roomTotalPlayers ?? 0;
   const achieved = currentPlayerProgress.achieved;
+  const hiddenLocked = achievement.hidden && !achieved;
+  const title = hiddenLocked ? "？？？" : achievement.name;
+  const description = hiddenLocked ? "隐藏成就将在解锁后揭晓具体条件。" : achievement.description;
   return (
-    <div className={`rounded-2xl border p-4 transition ${achieved ? "border-emerald-500/30 bg-slate-950 shadow-lg shadow-emerald-950/20" : "border-slate-800 bg-slate-950/45 opacity-60"}`}>
+    <div className={`relative rounded-2xl border p-4 transition ${theme.card} ${achieved ? "" : "opacity-80"} ${compact ? "" : "min-h-[232px]"}`}>
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Pill className={rarityStyles[achievement.rarity] || "bg-slate-800 text-slate-300"}>{achievement.rarity}</Pill>
-            <Pill className="bg-slate-800 text-slate-300">房间内 {achievedCount}/{roomProgress.length} 人获得</Pill>
+            <Pill className={getAchievementBadgeClass(item)}>{achievement.hidden && achieved ? "钻石隐藏" : achievement.rarity}</Pill>
+            <Pill className="bg-slate-800 text-slate-300">房间内 {achievedCount}/{totalPlayers} 人获得</Pill>
             {achieved ? <Pill className="bg-emerald-500/15 text-emerald-200">已获得</Pill> : <Pill className="bg-slate-800 text-slate-400">未获得</Pill>}
           </div>
-          <h4 className={`${compact ? "text-base" : "text-lg"} font-black`}>{achievement.name}</h4>
-          <p className="mt-1 text-sm text-slate-400">{achievement.description}</p>
+          <h4 className={`${compact ? "text-base" : "text-lg"} font-black ${theme.title}`}>{title}</h4>
+          <p className="mt-1 text-sm text-slate-300/90">{description}</p>
         </div>
       </div>
-      <div className="mt-4 rounded-2xl bg-slate-900 px-3 py-2 text-sm">
+      <div className="mt-4 grid gap-2 rounded-2xl bg-slate-900/80 px-3 py-3 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-slate-500">自己的获得时间</span>
-          <span className={achieved ? "font-black text-emerald-200" : "font-black text-slate-500"}>{formatAchievementTime(currentPlayerProgress.achievedAt)}</span>
+          <span className="text-slate-500">获得时间</span>
+          <span className={achieved ? `font-black ${theme.accent}` : "font-black text-slate-500"}>{formatAchievementTime(currentPlayerProgress.achievedAt)}</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-slate-500">获得进度</span>
+          <span className={achieved ? `font-black ${theme.accent}` : "font-black text-slate-300"}>{currentPlayerProgress.current}/{currentPlayerProgress.target}</span>
         </div>
       </div>
     </div>
