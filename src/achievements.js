@@ -59,8 +59,8 @@ export const ACHIEVEMENT_DEFINITIONS = [
   { id: "highGoalsExact5", name: "大比分狂魔", description: "第一次猜中双方总进球不少于 5 球的完整比分", rarity: "史诗", category: "进球类", hidden: false, target: 1 },
   { id: "top10First", name: "首位上榜", description: "第一次进入房间排行榜前 10", rarity: "普通", category: "房间排名类", hidden: false, target: 1 },
   { id: "firstTop1", name: "榜首体验卡", description: "至少完成 5 场比赛后，首次登顶房间排行榜第 1 名", rarity: "稀有", category: "房间排名类", hidden: false, target: 1 },
-  { id: "top3Streak3", name: "稳住前三", description: "连续 3 场结算后保持房间排行榜前三", rarity: "史诗", category: "房间排名类", hidden: false, target: 3 },
-  { id: "top1Streak3", name: "守擂成功", description: "连续 3 场结算后保持房间排行榜第 1 名", rarity: "传说", category: "房间排名类", hidden: false, target: 3 },
+  { id: "top3Streak3", name: "稳住前三", description: "至少完成 5 场比赛后，连续 3 场结算后保持房间排行榜前三", rarity: "史诗", category: "房间排名类", hidden: false, target: 3 },
+  { id: "top1Streak3", name: "守擂成功", description: "至少完成 5 场比赛后，连续 3 场结算后保持房间排行榜第 1 名", rarity: "传说", category: "房间排名类", hidden: false, target: 3 },
   { id: "top1Streak10", name: "榜首不动如山", description: "连续 10 场结算后保持房间排行榜第 1 名", rarity: "神话", category: "房间排名类", hidden: false, target: 10 },
   { id: "finalChampion", name: "世界杯大魔王", description: "全部赛事结束时排名房间第 1 名", rarity: "神话", category: "房间排名类", hidden: false, target: 1 },
   { id: "finalTop3", name: "房间三甲", description: "全部赛事结束时排名房间前三", rarity: "传说", category: "房间排名类", hidden: false, target: 1 },
@@ -488,11 +488,17 @@ function computePlayerProgress(definition, player, context, funWins) {
       return getBinaryProgress(Boolean(first), first?.match.kickoff || null);
     }
     case "top3Streak3": {
-      const streak = computeLongestStreak(rankingSnapshots.map((snapshot) => ({ ...snapshot, match: snapshot.match })), (snapshot) => (snapshot.rankings.find((item) => item.id === player.id)?.rank || 999) <= 3);
+      const streak = computeLongestStreak(rankingSnapshots.map((snapshot) => ({ ...snapshot, match: snapshot.match })), (snapshot) => {
+        const current = snapshot.rankings.find((item) => item.id === player.id);
+        return Boolean(current && current.played >= 5 && current.rank <= 3);
+      });
       return getProgress(streak.count, 3, streak.achievedAt);
     }
     case "top1Streak3": {
-      const streak = computeLongestStreak(rankingSnapshots.map((snapshot) => ({ ...snapshot, match: snapshot.match })), (snapshot) => (snapshot.rankings.find((item) => item.id === player.id)?.rank || 999) === 1);
+      const streak = computeLongestStreak(rankingSnapshots.map((snapshot) => ({ ...snapshot, match: snapshot.match })), (snapshot) => {
+        const current = snapshot.rankings.find((item) => item.id === player.id);
+        return Boolean(current && current.played >= 5 && current.rank === 1);
+      });
       return getProgress(streak.count, 3, streak.achievedAt);
     }
     case "top1Streak10": {
