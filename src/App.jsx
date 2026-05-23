@@ -959,8 +959,15 @@ function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
   );
 }
 
-function UserNameOnly({ player, className = "" }) {
-  return <span className={`font-black text-slate-100 ${className}`}>{player?.name || player?.email || "未命名用户"}</span>;
+function UserNameOnly({ player, className = "", mono = false, wrap = false }) {
+  return (
+    <span
+      title={player?.name || player?.email || "未命名用户"}
+      className={`block min-w-0 text-slate-100 ${mono ? "font-mono font-semibold tracking-tight" : "font-black"} ${wrap ? "whitespace-normal break-all" : "truncate"} ${className}`}
+    >
+      {player?.name || player?.email || "未命名用户"}
+    </span>
+  );
 }
 
 function EmojiPicker({ value, onChange, disabled = false }) {
@@ -2238,15 +2245,123 @@ function ScoreRankingTable({ rankings, currentPlayerId, settledCount, onOpenPlay
 
 function MiniRankingCard({ title, subtitle, badge, players, valueLabel }) {
   const leader = players?.[0];
-  return <Card><div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="text-xl font-black">{title}</h3><p className="text-sm text-slate-400">{subtitle}</p></div><Pill className="bg-slate-800 text-slate-300">{badge}</Pill></div>{leader && leader.value > 0 ? <div className="space-y-3"><div className="rounded-3xl border border-slate-700 bg-slate-950 p-4 text-center"><div className="text-xs text-slate-500">当前第 1 名</div><div className="mt-2 text-xl"><UserNameOnly player={leader} /></div><div className="mt-3 rounded-2xl bg-slate-900 px-3 py-2 text-sm text-slate-400">{valueLabel} <span className="font-black text-slate-100">{leader.value}</span> 次</div></div><div className="space-y-2">{players.slice(0, 5).map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 px-3 py-2 text-sm"><span className="font-bold">#{index + 1} {player.name}</span><span className="font-black">{player.value}</span></div>)}</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无有效数据</div>}</Card>;
+  return (
+    <Card className="h-full overflow-hidden bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 shadow-[0_18px_60px_rgba(15,23,42,0.28)]">
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[1.65rem] font-black leading-tight tracking-tight text-slate-50">{title}</h3>
+          <p className="mt-2 max-w-[22ch] text-sm leading-6 text-slate-400">{subtitle}</p>
+        </div>
+        <Pill className="shrink-0 bg-slate-800/90 px-3 py-1.5 text-center text-xs font-bold text-slate-200 shadow-inner shadow-slate-950/50">{badge}</Pill>
+      </div>
+      {leader && leader.value > 0 ? (
+        <div className="space-y-3">
+          <div className="rounded-[28px] border border-slate-700/80 bg-gradient-to-b from-slate-950 to-[#061126] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+            <div className="text-center text-xs tracking-[0.2em] text-slate-500">当前第 1 名</div>
+            <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-4 shadow-inner shadow-black/20">
+              <UserNameOnly player={leader} mono wrap className="mx-auto max-w-[20ch] text-center text-lg leading-6 md:text-[1.35rem] md:leading-7" />
+            </div>
+            <div className="mt-3 rounded-2xl bg-slate-900/90 px-3 py-2 text-center text-sm text-slate-400">
+              {valueLabel} <span className="font-black text-slate-100">{leader.value}</span> 次
+            </div>
+          </div>
+          <div className="space-y-2">
+            {players.slice(0, 5).map((player, index) => (
+              <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-800/65 px-3 py-3 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <span className="shrink-0 rounded-xl bg-slate-900 px-2 py-1 font-bold text-slate-300">#{index + 1}</span>
+                <UserNameOnly player={player} mono wrap className="flex-1 text-sm leading-5 text-slate-100" />
+                <span className="shrink-0 rounded-xl bg-slate-950 px-2.5 py-1 font-black text-slate-100">{player.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无有效数据</div>
+      )}
+    </Card>
+  );
 }
 
 function PredictionStyleRankingsPanel({ predictionStyleRankings }) {
-  return <div><div className="mb-3 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">预测风格榜</h2><p className="text-sm text-slate-400">这些榜单不改变积分，只记录玩家的竞猜风格和名场面。</p></div><Pill className="bg-slate-800 text-slate-100">趣味统计</Pill></div><div className="grid gap-5 lg:grid-cols-4"><MiniRankingCard title="精准狙击榜" subtitle="完全猜中比分次数最多。" badge="精准狙击手" players={predictionStyleRankings.exactSnipers} valueLabel="完全比分" /><MiniRankingCard title="稳健大师榜" subtitle="猜中胜平负次数最多。" badge="稳健大师" players={predictionStyleRankings.steadyMasters} valueLabel="命中结果" /><MiniRankingCard title="保守大师榜" subtitle="预测打平比分次数最多。" badge="保守大师" players={predictionStyleRankings.conservativeMasters} valueLabel="预测平局" /><MiniRankingCard title="进攻狂魔榜" subtitle="预测单场总进球 ≥ 4 次数最多。" badge="进攻狂魔" players={predictionStyleRankings.attackingMadmen} valueLabel="大比分预测" /></div></div>;
+  return <div><div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">预测风格榜</h2><p className="text-sm text-slate-400">这些榜单不改变积分，只记录玩家的竞猜风格和名场面。</p></div><Pill className="bg-slate-800 text-slate-100">趣味统计</Pill></div><div className="grid gap-5 md:grid-cols-2"><MiniRankingCard title="精准狙击榜" subtitle="完全猜中比分次数最多。" badge="精准狙击手" players={predictionStyleRankings.exactSnipers} valueLabel="完全比分" /><MiniRankingCard title="稳健大师榜" subtitle="猜中胜平负次数最多。" badge="稳健大师" players={predictionStyleRankings.steadyMasters} valueLabel="命中结果" /><MiniRankingCard title="保守大师榜" subtitle="预测打平比分次数最多。" badge="保守大师" players={predictionStyleRankings.conservativeMasters} valueLabel="预测平局" /><MiniRankingCard title="进攻狂魔榜" subtitle="预测单场总进球 ≥ 4 次数最多。" badge="进攻狂魔" players={predictionStyleRankings.attackingMadmen} valueLabel="大比分预测" /></div></div>;
 }
 
 function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers }) {
-  return <div className="grid gap-5 lg:grid-cols-3"><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">最高连胜排名</h3><p className="text-sm text-slate-400">连续猜中胜平负即计入连胜。</p></div><Pill className="bg-yellow-500/15 text-yellow-200">大预言家</Pill></div><div className="space-y-3">{streakRankings.slice(0, 5).map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-3"><div><div className="font-black">#{index + 1} {player.name}</div>{index === 0 && <div className="text-xs text-yellow-200">称号：大预言家</div>}</div><div className="text-2xl font-black">{player.maxStreak}</div></div>)}</div></Card><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">反向明灯榜</h3><p className="text-sm text-slate-400">当前总分最低的玩家。</p></div><Pill className="bg-rose-500/15 text-rose-200">毒奶之王</Pill></div>{reverseLightPlayer ? <div className="rounded-3xl border border-rose-300/20 bg-rose-500/10 p-5 text-center"><div className="text-2xl"><UserNameOnly player={reverseLightPlayer} /></div><div className="mt-1 text-sm text-rose-100">称号：毒奶之王</div><div className="mt-4 rounded-2xl bg-slate-950 p-3 text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无数据</div>}</Card><Card><div className="mb-4"><h3 className="text-xl font-black">每日最佳玩家</h3><p className="text-sm text-slate-400">仅显示最近 3 个比赛日的得分最高玩家。</p></div><div className="max-h-[420px] space-y-3 overflow-auto pr-1">{dailyBestPlayers.length ? dailyBestPlayers.map((day) => <div key={day.date} className="rounded-2xl bg-slate-800/60 p-3"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{day.date}</div><Pill className="bg-slate-900 text-slate-300">{day.matchCount}场</Pill></div>{day.winners.length ? <div className="space-y-2">{day.winners.slice(0, 5).map((player) => <div key={player.id} className="flex items-center justify-between rounded-xl bg-slate-950 px-3 py-2"><span>{player.name}</span><span className="font-black">{day.topScore}分</span></div>)}</div> : <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>}</div>) : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}</div></Card></div>;
+  return (
+    <div className="grid gap-5 lg:grid-cols-3">
+      <Card>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-xl font-black">最高连胜排名</h3>
+            <p className="text-sm text-slate-400">连续猜中胜平负即计入连胜。</p>
+          </div>
+          <Pill className="shrink-0 bg-yellow-500/15 text-yellow-200">大预言家</Pill>
+        </div>
+        <div className="space-y-3">
+          {streakRankings.slice(0, 5).map((player, index) => (
+            <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-800/60 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 font-bold text-slate-300">#{index + 1}</span>
+                  <UserNameOnly player={player} mono wrap className="text-base leading-5" />
+                </div>
+                {index === 0 && <div className="mt-1 text-xs text-yellow-200">称号：大预言家</div>}
+              </div>
+              <div className="shrink-0 text-2xl font-black">{player.maxStreak}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-xl font-black">反向明灯榜</h3>
+            <p className="text-sm text-slate-400">当前总分最低的玩家。</p>
+          </div>
+          <Pill className="shrink-0 bg-rose-500/15 text-rose-200">毒奶之王</Pill>
+        </div>
+        {reverseLightPlayer ? (
+          <div className="rounded-3xl border border-rose-300/20 bg-gradient-to-br from-rose-500/10 to-fuchsia-500/10 p-5 shadow-[0_18px_60px_rgba(88,28,135,0.18)]">
+            <div className="rounded-2xl bg-slate-950/50 px-4 py-4">
+              <UserNameOnly player={reverseLightPlayer} mono wrap className="mx-auto max-w-[20ch] text-center text-lg leading-6 md:text-[1.5rem] md:leading-8" />
+            </div>
+            <div className="mt-3 text-center text-sm text-rose-100">称号：毒奶之王</div>
+            <div className="mt-4 rounded-2xl bg-slate-950 p-3 text-center text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无数据</div>
+        )}
+      </Card>
+      <Card>
+        <div className="mb-4">
+          <h3 className="text-xl font-black">每日最佳玩家</h3>
+          <p className="text-sm text-slate-400">仅显示最近 3 个比赛日的得分最高玩家。</p>
+        </div>
+        <div className="max-h-[420px] space-y-3 overflow-auto pr-1">
+          {dailyBestPlayers.length ? dailyBestPlayers.map((day) => (
+            <div key={day.date} className="rounded-2xl bg-slate-800/60 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="font-black">{day.date}</div>
+                <Pill className="bg-slate-900 text-slate-300">{day.matchCount}场</Pill>
+              </div>
+              {day.winners.length ? (
+                <div className="space-y-2">
+                  {day.winners.slice(0, 5).map((player) => (
+                    <div key={player.id} className="flex items-center gap-3 rounded-xl bg-slate-950 px-3 py-2.5">
+                      <UserNameOnly player={player} mono wrap className="flex-1 text-sm leading-5" />
+                      <span className="shrink-0 text-lg font-black">{day.topScore}分</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>
+              )}
+            </div>
+          )) : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 function RankTrendChart({ players, rankingTrend }) {
