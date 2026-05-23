@@ -5,14 +5,18 @@ import {
   Crown,
   Flame,
   Home,
+  KeyRound,
+  Loader2,
   Lock,
+  LogOut,
+  Mail,
   Medal,
-  Plus,
   Search,
   Settings,
   ShieldCheck,
   Trophy,
   Unlock,
+  User,
   Users,
   XCircle,
 } from "lucide-react";
@@ -26,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 const STAGES = {
   GROUP: { label: "小组赛", multiplier: 1 },
@@ -88,12 +93,7 @@ const TEAM_FLAGS = {
   哥伦比亚: "🇨🇴",
 };
 
-const initialPlayers = [
-  { id: "p1", name: "Oscar", avatar: "🦊", joinedAt: "2026-05-01T09:00:00" },
-  { id: "p2", name: "阿伟", avatar: "🐯", joinedAt: "2026-05-02T09:00:00" },
-  { id: "p3", name: "小王", avatar: "🐼", joinedAt: "2026-05-03T09:00:00" },
-  { id: "p4", name: "老张", avatar: "🦁", joinedAt: "2026-05-04T09:00:00" },
-];
+const initialPlayers = [];
 
 const initialMatches = [
   { id: "m1", no: 1, stage: "GROUP", group: "A组", home: "墨西哥", away: "南非", kickoff: "2026-06-12T03:00:00+08:00", status: "open", homeScore: null, awayScore: null },
@@ -216,34 +216,81 @@ const scheduleRows = [
 
 const COMPLETE_WORLD_CUP_SCHEDULE = scheduleRows.map(([no, group, home, away, kickoff, stadium, city]) => ({ no, group, home, away, kickoff, stadium, city }));
 
-const initialPredictions = [
-  { id: "pr1", playerId: "p1", matchId: "m4", home: 2, away: 1, submittedAt: "2026-06-13T12:00:00" },
-  { id: "pr2", playerId: "p2", matchId: "m4", home: 3, away: 2, submittedAt: "2026-06-13T12:10:00" },
-  { id: "pr3", playerId: "p3", matchId: "m4", home: 1, away: 1, submittedAt: "2026-06-13T12:20:00" },
-  { id: "pr4", playerId: "p4", matchId: "m4", home: 0, away: 1, submittedAt: "2026-06-13T12:25:00" },
-  { id: "pr5", playerId: "p1", matchId: "m5", home: 1, away: 1, submittedAt: "2026-07-04T12:00:00" },
-  { id: "pr6", playerId: "p2", matchId: "m5", home: 2, away: 2, submittedAt: "2026-07-04T12:30:00" },
-  { id: "pr7", playerId: "p3", matchId: "m5", home: 2, away: 1, submittedAt: "2026-07-04T13:00:00" },
-];
-
-const initialFunPredictions = {
-  p1: { champion: "巴西", goldenBoot: "姆巴佩", firstRedCardTeam: "乌拉圭", totalGoals: 178, submittedAt: "2026-05-20T12:00:00" },
-  p2: { champion: "阿根廷", goldenBoot: "梅西", firstRedCardTeam: "阿根廷", totalGoals: 172, submittedAt: "2026-05-20T12:20:00" },
-  p3: { champion: "法国", goldenBoot: "哈兰德", firstRedCardTeam: "塞尔维亚", totalGoals: 185, submittedAt: "2026-05-20T12:30:00" },
-};
-
-const initialFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
-
 const WORLD_CUP_GOAL_REFERENCES = [
   { edition: "2022 卡塔尔世界杯", goals: 172 },
   { edition: "2018 俄罗斯世界杯", goals: 169 },
 ];
 
-const initialWorldCupResults = {
-  1: { homeScore: 2, awayScore: 1 },
-  7: { homeScore: 3, awayScore: 1 },
-  11: { homeScore: 1, awayScore: 1 },
-};
+const emptyFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
+
+function mapProfile(row) {
+  return {
+    id: row.id,
+    name: row.username || row.email || "未命名用户",
+    email: row.email || "",
+    isAdmin: Boolean(row.is_admin),
+    joinedAt: row.joined_at || new Date().toISOString(),
+  };
+}
+
+function mapPrediction(row) {
+  return {
+    id: row.id,
+    playerId: row.user_id,
+    matchId: row.match_id,
+    home: row.home,
+    away: row.away,
+    submittedAt: row.submitted_at,
+  };
+}
+
+function mapFunPredictions(rows) {
+  return rows.reduce((acc, row) => {
+    acc[row.user_id] = {
+      champion: row.champion,
+      goldenBoot: row.golden_boot,
+      firstRedCardTeam: row.first_red_card_team,
+      totalGoals: row.total_goals,
+      submittedAt: row.submitted_at,
+    };
+    return acc;
+  }, {});
+}
+
+function mergeMatchOverrides(rows) {
+  const overrides = new Map(rows.map((row) => [row.match_id, row]));
+  return initialMatches.map((match) => {
+    const row = overrides.get(match.id);
+    if (!row) return { ...match };
+    return {
+      ...match,
+      status: row.status,
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+    };
+  });
+}
+
+function mapWorldCupResults(rows) {
+  return rows.reduce((acc, row) => {
+    acc[row.match_no] = { homeScore: row.home_score, awayScore: row.away_score };
+    return acc;
+  }, {});
+}
+
+function mapFunResults(row) {
+  if (!row) return { ...emptyFunResults };
+  return {
+    champion: row.champion || "",
+    goldenBoot: row.golden_boot || "",
+    firstRedCardTeam: row.first_red_card_team || "",
+    totalGoals: row.total_goals ?? "",
+  };
+}
+
+function getDisplayName(user, fallback = "未命名用户") {
+  return user?.user_metadata?.username || user?.email?.split("@")[0] || fallback;
+}
 
 const achievements = [
   { id: "firstPrediction", name: "初登赛场", description: "第一次提交比分竞猜", rarity: "普通", target: 1 },
@@ -569,6 +616,15 @@ function AvatarBadge({ children, size = "h-10 w-10", text = "text-xl" }) {
   return <div className={`flex ${size} items-center justify-center rounded-xl border border-slate-700 bg-slate-800 ${text} text-slate-100`}>{children}</div>;
 }
 
+function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
+  const label = (player?.name || player?.email || "").trim().slice(0, 1).toUpperCase();
+  return (
+    <div className={`flex ${size} shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-800 ${text} font-black text-slate-100`}>
+      {label || <User className="h-4 w-4" />}
+    </div>
+  );
+}
+
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
     <Card className="relative overflow-hidden">
@@ -582,6 +638,138 @@ function StatCard({ icon: Icon, label, value, sub }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function LoadingScreen({ message = "正在加载..." }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4">
+        <Loader2 className="h-5 w-5 animate-spin text-cyan-200" />
+        <span className="text-sm font-bold text-slate-300">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+function SupabaseSetupScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
+      <Card className="max-w-xl">
+        <div className="mb-3 flex items-center gap-3">
+          <ShieldCheck className="h-6 w-6 text-cyan-200" />
+          <h1 className="text-2xl font-black">需要配置 Supabase</h1>
+        </div>
+        <p className="text-sm leading-relaxed text-slate-400">
+          请根据 .env.example 创建 .env.local，并填写 VITE_SUPABASE_URL、VITE_SUPABASE_ANON_KEY 和 VITE_ADMIN_EMAILS。
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+function AuthScreen({ onSignedIn }) {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const isRegister = mode === "register";
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setLoading(true);
+    try {
+      const cleanEmail = email.trim();
+      const cleanUsername = username.trim();
+      if (isRegister && !cleanUsername) throw new Error("请填写用户名");
+      if (!cleanEmail || !password) throw new Error("请填写邮箱和密码");
+
+      if (isRegister) {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: { data: { username: cleanUsername } },
+        });
+        if (signUpError) throw signUpError;
+        if (data.user) {
+          await supabase.from("profiles").insert({
+            id: data.user.id,
+            email: data.user.email || cleanEmail,
+            username: cleanUsername,
+          });
+        }
+        if (data.session) {
+          onSignedIn?.(data.session);
+        } else {
+          setMessage("注册成功，请检查邮箱验证后再登录。");
+          setMode("login");
+        }
+      } else {
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        if (signInError) throw signInError;
+        onSignedIn?.(data.session);
+      }
+    } catch (authError) {
+      setError(authError.message || "操作失败，请稍后再试");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
+      <div className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900">
+            <Trophy className="h-8 w-8 text-cyan-200" />
+          </div>
+          <h1 className="text-3xl font-black">世界杯竞猜局</h1>
+          <p className="mt-2 text-sm text-slate-400">登录后才能提交竞猜、查看朋友预测和排行榜。</p>
+        </div>
+        <Card>
+          <div className="mb-5 grid grid-cols-2 rounded-2xl bg-slate-950 p-1">
+            <button type="button" onClick={() => setMode("login")} className={`rounded-xl px-3 py-2 text-sm font-black ${!isRegister ? "bg-slate-800 text-slate-50" : "text-slate-500"}`}>登录</button>
+            <button type="button" onClick={() => setMode("register")} className={`rounded-xl px-3 py-2 text-sm font-black ${isRegister ? "bg-slate-800 text-slate-50" : "text-slate-500"}`}>注册</button>
+          </div>
+          <form onSubmit={submitAuth} className="space-y-4">
+            {isRegister && (
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-slate-300">用户名</span>
+                <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
+                  <User className="h-4 w-4 text-slate-500" />
+                  <input value={username} onChange={(event) => setUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="例如 Oscar" />
+                </div>
+              </label>
+            )}
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-slate-300">邮箱</span>
+              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <Mail className="h-4 w-4 text-slate-500" />
+                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="you@example.com" />
+              </div>
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-slate-300">密码</span>
+              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <KeyRound className="h-4 w-4 text-slate-500" />
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="至少 6 位密码" />
+              </div>
+            </label>
+            {error && <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{error}</div>}
+            {message && <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">{message}</div>}
+            <button disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-4 py-3 text-sm font-black text-cyan-50 transition hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-50">
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isRegister ? "注册并进入" : "登录竞猜"}
+            </button>
+          </form>
+        </Card>
+      </div>
+    </div>
   );
 }
 
@@ -603,24 +791,34 @@ function MatchScore({ match }) {
 }
 
 export default function WorldCupPredictionMVP() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState("");
   const [activeTab, setActiveTab] = useState("home");
   const [players, setPlayers] = useState(initialPlayers);
-  const [currentPlayerId, setCurrentPlayerId] = useState("p1");
+  const [currentPlayerId, setCurrentPlayerId] = useState("");
   const [matches, setMatches] = useState(initialMatches);
-  const [predictions, setPredictions] = useState(initialPredictions);
-  const [funPredictions, setFunPredictions] = useState(initialFunPredictions);
-  const [funResults, setFunResults] = useState(initialFunResults);
-  const [worldCupResults, setWorldCupResults] = useState(initialWorldCupResults);
+  const [predictions, setPredictions] = useState([]);
+  const [funPredictions, setFunPredictions] = useState({});
+  const [funResults, setFunResults] = useState(emptyFunResults);
+  const [worldCupResults, setWorldCupResults] = useState({});
   const [selectedMatchId, setSelectedMatchId] = useState("m1");
-  const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("p1");
+  const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("ALL");
-  const [newPlayerName, setNewPlayerName] = useState("");
 
   const currentTime = useCurrentTime();
-  const currentPlayer = players.find((p) => p.id === currentPlayerId) || players[0];
+  const fallbackPlayer = session?.user ? {
+    id: session.user.id,
+    name: getDisplayName(session.user),
+    email: session.user.email || "",
+    isAdmin: false,
+    joinedAt: session.user.created_at || new Date().toISOString(),
+  } : null;
+  const currentPlayer = players.find((p) => p.id === currentPlayerId) || fallbackPlayer || players[0];
   const profilePlayer = players.find((p) => p.id === selectedProfilePlayerId) || currentPlayer;
-  const isAdmin = currentPlayerId === "p1";
+  const isAdmin = Boolean(currentPlayer?.isAdmin);
   const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
   const selectedMatch = matches.find((m) => m.id === selectedMatchId) || matches[0];
   const firstKickoff = useMemo(() => matches.reduce((earliest, match) => {
@@ -628,6 +826,114 @@ export default function WorldCupPredictionMVP() {
     return kickoff < earliest ? kickoff : earliest;
   }, new Date(matches[0]?.kickoff || Date.now())), [matches]);
   const funPredictionLocked = new Date() >= firstKickoff;
+
+  React.useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  async function ensureProfile(user) {
+    const email = user.email || "";
+    const { data: existing, error: selectError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (selectError) throw selectError;
+    if (existing) return;
+
+    const { error } = await supabase.from("profiles").insert({
+      id: user.id,
+      email,
+      username: getDisplayName(user),
+    });
+    if (error) throw error;
+  }
+
+  async function loadSupabaseData() {
+    const [
+      profilesResult,
+      predictionsResult,
+      funPredictionsResult,
+      matchOverridesResult,
+      worldCupResultsResult,
+      funResultsResult,
+    ] = await Promise.all([
+      supabase.from("profiles").select("*").order("joined_at", { ascending: true }),
+      supabase.from("predictions").select("*").order("submitted_at", { ascending: true }),
+      supabase.from("fun_predictions").select("*"),
+      supabase.from("match_overrides").select("*"),
+      supabase.from("world_cup_results").select("*"),
+      supabase.from("fun_results").select("*").eq("id", "main").maybeSingle(),
+    ]);
+
+    const firstError = [
+      profilesResult,
+      predictionsResult,
+      funPredictionsResult,
+      matchOverridesResult,
+      worldCupResultsResult,
+      funResultsResult,
+    ].find((result) => result.error)?.error;
+    if (firstError) throw firstError;
+
+    setPlayers((profilesResult.data || []).map(mapProfile));
+    setPredictions((predictionsResult.data || []).map(mapPrediction));
+    setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
+    setMatches(mergeMatchOverrides(matchOverridesResult.data || []));
+    setWorldCupResults(mapWorldCupResults(worldCupResultsResult.data || []));
+    setFunResults(mapFunResults(funResultsResult.data));
+  }
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function bootstrapData() {
+      if (!session?.user) {
+        setPlayers([]);
+        setPredictions([]);
+        setFunPredictions({});
+        setMatches(initialMatches);
+        setWorldCupResults({});
+        setFunResults(emptyFunResults);
+        setCurrentPlayerId("");
+        setSelectedProfilePlayerId("");
+        return;
+      }
+
+      setDataLoading(true);
+      setDataError("");
+      try {
+        await ensureProfile(session.user);
+        if (cancelled) return;
+        await loadSupabaseData();
+        if (cancelled) return;
+        setCurrentPlayerId(session.user.id);
+        setSelectedProfilePlayerId((prev) => prev || session.user.id);
+      } catch (error) {
+        if (!cancelled) setDataError(error.message || "加载 Supabase 数据失败");
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    }
+    bootstrapData();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
 
   React.useEffect(() => {
     if (!isAdmin && activeTab === "admin") setActiveTab("home");
@@ -725,65 +1031,131 @@ export default function WorldCupPredictionMVP() {
   const worldCupStandings = useMemo(() => buildWorldCupStandings(COMPLETE_WORLD_CUP_SCHEDULE, worldCupResults), [worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
 
-  function upsertPrediction(matchId, home, away) {
+  async function upsertPrediction(matchId, home, away) {
     const match = matches.find((m) => m.id === matchId);
-    if (!match || isMatchLocked(match, currentTime) || !Number.isFinite(home) || !Number.isFinite(away)) return;
+    if (!currentPlayerId || !match || isMatchLocked(match, currentTime) || !Number.isFinite(home) || !Number.isFinite(away)) return;
     const safeHome = Math.max(0, Math.floor(home));
     const safeAway = Math.max(0, Math.floor(away));
+    const submittedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("predictions")
+      .upsert({
+        user_id: currentPlayerId,
+        match_id: matchId,
+        home: safeHome,
+        away: safeAway,
+        submitted_at: submittedAt,
+      }, { onConflict: "user_id,match_id" })
+      .select()
+      .single();
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
+    const saved = mapPrediction(data);
     setPredictions((prev) => {
       const existing = prev.find((p) => p.playerId === currentPlayerId && p.matchId === matchId);
-      if (existing) return prev.map((p) => (p.id === existing.id ? { ...p, home: safeHome, away: safeAway, submittedAt: new Date().toISOString() } : p));
-      return [...prev, { id: `pr-${Date.now()}`, playerId: currentPlayerId, matchId, home: safeHome, away: safeAway, submittedAt: new Date().toISOString() }];
+      if (existing) return prev.map((p) => (p.id === existing.id ? saved : p));
+      return [...prev, saved];
     });
   }
 
-  function updateMatchResult(matchId, homeScore, awayScore) {
-    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return;
-    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: Math.max(0, Math.floor(homeScore)), awayScore: Math.max(0, Math.floor(awayScore)), status: "settled" } : m));
+  async function updateMatchResult(matchId, homeScore, awayScore) {
+    if (!isAdmin || !Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return;
+    const nextHome = Math.max(0, Math.floor(homeScore));
+    const nextAway = Math.max(0, Math.floor(awayScore));
+    const { error } = await supabase.from("match_overrides").upsert({
+      match_id: matchId,
+      status: "settled",
+      home_score: nextHome,
+      away_score: nextAway,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
+    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: nextHome, awayScore: nextAway, status: "settled" } : m));
   }
 
-  function toggleLock(matchId) {
-    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, status: m.status === "open" ? "closed" : m.status === "closed" ? "open" : m.status } : m));
+  async function toggleLock(matchId) {
+    if (!isAdmin) return;
+    const match = matches.find((item) => item.id === matchId);
+    if (!match || match.status === "settled") return;
+    const nextStatus = match.status === "open" ? "closed" : "open";
+    const { error } = await supabase.from("match_overrides").upsert({
+      match_id: matchId,
+      status: nextStatus,
+      home_score: match.homeScore,
+      away_score: match.awayScore,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
+    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, status: nextStatus } : m));
   }
 
-  function addPlayer() {
-    const name = newPlayerName.trim();
-    if (!name) return;
-    const avatars = ["🐺", "🐵", "🐶", "🐱", "🦅", "🐲", "🐰", "🦄"];
-    const newPlayer = { id: `p-${Date.now()}`, name, avatar: avatars[Math.floor(Math.random() * avatars.length)], joinedAt: new Date().toISOString() };
-    setPlayers((prev) => [...prev, newPlayer]);
-    setCurrentPlayerId(newPlayer.id);
-    setNewPlayerName("");
-  }
-
-  function saveFunPrediction(champion, goldenBoot, firstRedCardTeam, totalGoals) {
-    if (funPredictionLocked) return;
+  async function saveFunPrediction(champion, goldenBoot, firstRedCardTeam, totalGoals) {
+    if (!currentPlayerId || funPredictionLocked) return;
     const cleanChampion = champion.trim();
     const cleanGoldenBoot = goldenBoot.trim();
     const cleanFirstRedCardTeam = firstRedCardTeam.trim();
     const cleanTotalGoalsText = String(totalGoals).trim();
     const cleanTotalGoals = Number(cleanTotalGoalsText);
     if (!cleanChampion || !cleanGoldenBoot || !cleanFirstRedCardTeam || !cleanTotalGoalsText || !Number.isFinite(cleanTotalGoals)) return;
+    const submittedAt = new Date().toISOString();
+    const { error } = await supabase.from("fun_predictions").upsert({
+      user_id: currentPlayerId,
+      champion: cleanChampion,
+      golden_boot: cleanGoldenBoot,
+      first_red_card_team: cleanFirstRedCardTeam,
+      total_goals: cleanTotalGoals,
+      submitted_at: submittedAt,
+    });
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
     setFunPredictions((prev) => ({
       ...prev,
-      [currentPlayerId]: { champion: cleanChampion, goldenBoot: cleanGoldenBoot, firstRedCardTeam: cleanFirstRedCardTeam, totalGoals: cleanTotalGoals, submittedAt: new Date().toISOString() },
+      [currentPlayerId]: { champion: cleanChampion, goldenBoot: cleanGoldenBoot, firstRedCardTeam: cleanFirstRedCardTeam, totalGoals: cleanTotalGoals, submittedAt },
     }));
   }
 
-  function updateWorldCupResult(matchNo, homeScore, awayScore) {
+  async function updateWorldCupResult(matchNo, homeScore, awayScore) {
+    if (!isAdmin) return;
     const cleanHomeScore = Number(homeScore);
     const cleanAwayScore = Number(awayScore);
     if (!Number.isFinite(cleanHomeScore) || !Number.isFinite(cleanAwayScore)) return;
+    const nextResult = {
+      homeScore: Math.max(0, Math.floor(cleanHomeScore)),
+      awayScore: Math.max(0, Math.floor(cleanAwayScore)),
+    };
+    const { error } = await supabase.from("world_cup_results").upsert({
+      match_no: matchNo,
+      home_score: nextResult.homeScore,
+      away_score: nextResult.awayScore,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
     setWorldCupResults((prev) => ({
       ...prev,
-      [matchNo]: {
-        homeScore: Math.max(0, Math.floor(cleanHomeScore)),
-        awayScore: Math.max(0, Math.floor(cleanAwayScore)),
-      },
+      [matchNo]: nextResult,
     }));
   }
 
-  function clearWorldCupResult(matchNo) {
+  async function clearWorldCupResult(matchNo) {
+    if (!isAdmin) return;
+    const { error } = await supabase.from("world_cup_results").delete().eq("match_no", matchNo);
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
     setWorldCupResults((prev) => {
       const next = { ...prev };
       delete next[matchNo];
@@ -791,10 +1163,38 @@ export default function WorldCupPredictionMVP() {
     });
   }
 
+  async function saveFunResults(nextResults) {
+    if (!isAdmin) return;
+    const payload = {
+      id: "main",
+      champion: nextResults.champion || "",
+      golden_boot: nextResults.goldenBoot || "",
+      first_red_card_team: nextResults.firstRedCardTeam || "",
+      total_goals: nextResults.totalGoals === "" ? null : Number(nextResults.totalGoals),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("fun_results").upsert(payload);
+    if (error) {
+      setDataError(error.message);
+      return;
+    }
+    setFunResults(nextResults);
+  }
+
   function openPlayerProfile(playerId) {
     setSelectedProfilePlayerId(playerId);
     setActiveTab("playerProfile");
   }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setActiveTab("home");
+  }
+
+  if (!isSupabaseConfigured) return <SupabaseSetupScreen />;
+  if (authLoading) return <LoadingScreen message="正在检查登录状态..." />;
+  if (!session) return <AuthScreen onSignedIn={setSession} />;
+  if (dataLoading && !players.length) return <LoadingScreen message="正在加载竞猜数据..." />;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -806,14 +1206,16 @@ export default function WorldCupPredictionMVP() {
               <div><div className="text-lg font-black">世界杯竞猜局</div><div className="text-xs text-slate-500">Oscar&apos;s World Cup Room</div></div>
             </div>
             <div className="mt-5 rounded-2xl bg-slate-800/60 p-3">
-              <div className="text-xs text-slate-400">当前玩家</div>
-              <select value={currentPlayerId} onChange={(e) => setCurrentPlayerId(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none">
-                {players.map((player) => <option key={player.id} value={player.id}>{player.avatar} {player.name}</option>)}
-              </select>
-              <div className="mt-3 flex gap-2">
-                <input value={newPlayerName} onChange={(e) => setNewPlayerName(e.target.value)} placeholder="添加朋友昵称" className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none placeholder:text-slate-500" />
-                <DarkButton onClick={addPlayer} className="px-3"><Plus className="h-4 w-4" /></DarkButton>
+              <div className="flex items-center gap-3">
+                <UserBadge player={currentPlayer} size="h-11 w-11" text="text-base" />
+                <div className="min-w-0">
+                  <div className="truncate font-black">{currentPlayer?.name}</div>
+                  <div className="truncate text-xs text-slate-500">{currentPlayer?.email}</div>
+                </div>
               </div>
+              {isAdmin && <Pill className="mt-3 bg-emerald-500/15 text-emerald-200">管理员</Pill>}
+              <DarkButton onClick={signOut} className="mt-3 flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-black"><LogOut className="h-4 w-4" />退出登录</DarkButton>
+              {dataError && <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{dataError}</div>}
             </div>
             <nav className="mt-5 space-y-2">
               {visibleTabs.map((tab) => {
@@ -837,7 +1239,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} predictions={predictions} matches={matches} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={setFunResults} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} worldCupResults={worldCupResults} updateWorldCupResult={updateWorldCupResult} clearWorldCupResult={clearWorldCupResult} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -869,7 +1271,7 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
           {rankings.slice(0, 3).map((player, index) => (
             <button key={player.id} onClick={() => onOpenPlayerProfile(player.id)} className="flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-950 p-3 text-left transition hover:bg-slate-800/80">
               <div className="flex items-center gap-3">
-                <AvatarBadge size="h-9 w-9" text="text-lg">{player.avatar}</AvatarBadge>
+                <UserBadge player={player} size="h-9 w-9" />
                 <div>
                   <div className="font-black">#{index + 1} {player.name}</div>
                   <div className="text-xs text-slate-500">命中比分 {player.exactCount} 场</div>
@@ -1119,7 +1521,7 @@ function MatchDetail({ match, players, predictions, currentPlayerId, onSubmit, n
     <Card className="lg:sticky lg:top-6 lg:self-start">
       <div className="mb-4 flex items-start justify-between gap-3"><div><div className="mb-2 flex flex-wrap gap-2"><Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill><MatchStatus match={match} /><MatchCountdown match={match} now={now} /></div><h2 className="text-2xl font-black leading-tight">{teamName(match.home)} vs {teamName(match.away)}</h2><p className="mt-1 text-sm text-slate-500">{formatDateTime(match.kickoff)} · {match.group}</p></div><div className="rounded-2xl bg-slate-800 p-3">{locked ? <Lock className="h-5 w-5" /> : <Unlock className="h-5 w-5" />}</div></div>
       <div className="rounded-2xl bg-slate-950 p-4"><div className="text-sm font-bold text-slate-300">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={teamName(match.home)} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black text-slate-500">:</div><ScoreInput label={teamName(match.away)} value={away} disabled={locked} onChange={setAway} /></div><DarkButton disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 px-4 py-3 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</DarkButton>{locked && <div className="mt-3 text-center text-xs text-slate-500">比赛已锁定，不能再修改预测。</div>}</div>
-      <div className="mt-5"><div className="mb-3 flex items-center justify-between"><h3 className="font-black">朋友预测</h3>{!showAllPredictions && <Pill className="bg-slate-800 text-slate-400">开赛后公开</Pill>}</div><div className="space-y-2">{players.map((player) => { const pred = predictions.find((p) => p.playerId === player.id && p.matchId === match.id); const isMe = player.id === currentPlayerId; const canShow = showAllPredictions || isMe; const points = calculatePoints(pred, match); return <div key={player.id} className="rounded-2xl bg-slate-800/60 p-3"><div className="flex items-center justify-between gap-3"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex items-center gap-3 text-left"><AvatarBadge size="h-9 w-9" text="text-lg">{player.avatar}</AvatarBadge><div><div className="font-bold hover:text-cyan-200">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{pred ? "已提交" : "未提交"}</div></div></button><div className="text-right">{canShow ? <><div className="text-lg font-black">{pred ? `${pred.home}:${pred.away}` : "--"}</div>{match.status === "settled" && <div className="text-xs text-slate-500">{explainPoints(pred, match)} · +{points}</div>}</> : <div className="text-sm text-slate-500">已隐藏</div>}</div></div></div>; })}</div></div>
+      <div className="mt-5"><div className="mb-3 flex items-center justify-between"><h3 className="font-black">朋友预测</h3>{!showAllPredictions && <Pill className="bg-slate-800 text-slate-400">开赛后公开</Pill>}</div><div className="space-y-2">{players.map((player) => { const pred = predictions.find((p) => p.playerId === player.id && p.matchId === match.id); const isMe = player.id === currentPlayerId; const canShow = showAllPredictions || isMe; const points = calculatePoints(pred, match); return <div key={player.id} className="rounded-2xl bg-slate-800/60 p-3"><div className="flex items-center justify-between gap-3"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex items-center gap-3 text-left"><UserBadge player={player} size="h-9 w-9" /><div><div className="font-bold hover:text-cyan-200">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{pred ? "已提交" : "未提交"}</div></div></button><div className="text-right">{canShow ? <><div className="text-lg font-black">{pred ? `${pred.home}:${pred.away}` : "--"}</div>{match.status === "settled" && <div className="text-xs text-slate-500">{explainPoints(pred, match)} · +{points}</div>}</> : <div className="text-sm text-slate-500">已隐藏</div>}</div></div></div>; })}</div></div>
     </Card>
   );
 }
@@ -1160,7 +1562,7 @@ function FunInput({ label, value, disabled, onChange, placeholder }) {
 }
 
 function FunPredictionPlayerCard({ player, prediction, isMe, canShow, awards }) {
-  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><AvatarBadge>{player.avatar}</AvatarBadge><div><div className="font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-5 w-5 text-emerald-200" /> : <XCircle className="h-5 w-5 text-slate-600" />}</div>{canShow ? <div className="space-y-2 text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-2 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="rounded-xl bg-slate-900 px-3 py-5 text-center text-sm text-slate-500">第一场开赛后公开</div>}</div>;
+  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><UserBadge player={player} /><div><div className="font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-5 w-5 text-emerald-200" /> : <XCircle className="h-5 w-5 text-slate-600" />}</div>{canShow ? <div className="space-y-2 text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-2 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="rounded-xl bg-slate-900 px-3 py-5 text-center text-sm text-slate-500">第一场开赛后公开</div>}</div>;
 }
 
 function InfoRow({ label, value }) {
@@ -1241,7 +1643,7 @@ function PlayerProfilePanel({ player, players, rankings, predictions, matches, s
       <Card>
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div className="flex items-center gap-4">
-            <AvatarBadge size="h-16 w-16" text="text-3xl">{player.avatar}</AvatarBadge>
+            <UserBadge player={player} size="h-16 w-16" text="text-xl" />
             <div>
               <h2 className="text-3xl font-black">{player.name} 的个人主页</h2>
               <p className="mt-1 text-sm text-slate-400">查看个人竞猜表现、称号和历史记录。</p>
@@ -1404,12 +1806,12 @@ function RankingPanel({ players, rankingTrend, predictionStyleRankings, streakRa
 }
 
 function ScoreRankingTable({ rankings, currentPlayerId, settledCount, onOpenPlayerProfile }) {
-  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">竞猜积分排行榜</h2><p className="text-sm text-slate-400">排序：总积分 ＞ 命中比分 ＞ 命中结果 ＞ 参与场次 ＞ 加入时间。点击玩家可查看个人主页。</p></div><Pill className="bg-slate-800 text-slate-100">已结算 {settledCount} 场</Pill></div><div className="overflow-hidden rounded-2xl border border-slate-700"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-3">排名</th><th className="px-4 py-3">玩家</th><th className="px-4 py-3">总积分</th><th className="px-4 py-3">完全比分</th><th className="px-4 py-3">命中结果</th><th className="px-4 py-3">参与场次</th></tr></thead><tbody>{rankings.map((player, index) => <tr key={player.id} className="border-t border-slate-700 bg-slate-950/60"><td className="px-4 py-4 text-lg font-black">#{index + 1}</td><td className="px-4 py-4"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex items-center gap-3 text-left"><AvatarBadge>{player.avatar}</AvatarBadge><div><div className="font-black hover:text-cyan-200">{player.name}</div>{player.id === currentPlayerId && <div className="text-xs text-emerald-200">当前玩家</div>}</div></button></td><td className="px-4 py-4 text-2xl font-black">{player.total}</td><td className="px-4 py-4">{player.exactCount}</td><td className="px-4 py-4">{player.outcomeCount}</td><td className="px-4 py-4">{player.played}</td></tr>)}</tbody></table></div></Card>;
+  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">竞猜积分排行榜</h2><p className="text-sm text-slate-400">排序：总积分 ＞ 命中比分 ＞ 命中结果 ＞ 参与场次 ＞ 加入时间。点击玩家可查看个人主页。</p></div><Pill className="bg-slate-800 text-slate-100">已结算 {settledCount} 场</Pill></div><div className="overflow-hidden rounded-2xl border border-slate-700"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-3">排名</th><th className="px-4 py-3">玩家</th><th className="px-4 py-3">总积分</th><th className="px-4 py-3">完全比分</th><th className="px-4 py-3">命中结果</th><th className="px-4 py-3">参与场次</th></tr></thead><tbody>{rankings.map((player, index) => <tr key={player.id} className="border-t border-slate-700 bg-slate-950/60"><td className="px-4 py-4 text-lg font-black">#{index + 1}</td><td className="px-4 py-4"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex items-center gap-3 text-left"><UserBadge player={player} /><div><div className="font-black hover:text-cyan-200">{player.name}</div>{player.id === currentPlayerId && <div className="text-xs text-emerald-200">当前玩家</div>}</div></button></td><td className="px-4 py-4 text-2xl font-black">{player.total}</td><td className="px-4 py-4">{player.exactCount}</td><td className="px-4 py-4">{player.outcomeCount}</td><td className="px-4 py-4">{player.played}</td></tr>)}</tbody></table></div></Card>;
 }
 
 function MiniRankingCard({ title, subtitle, badge, players, valueLabel }) {
   const leader = players?.[0];
-  return <Card><div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="text-xl font-black">{title}</h3><p className="text-sm text-slate-400">{subtitle}</p></div><Pill className="bg-slate-800 text-slate-300">{badge}</Pill></div>{leader && leader.value > 0 ? <div className="space-y-3"><div className="rounded-3xl border border-slate-700 bg-slate-950 p-4 text-center"><div className="mx-auto flex justify-center"><AvatarBadge size="h-14 w-14" text="text-2xl">{leader.avatar}</AvatarBadge></div><div className="mt-3 text-xl font-black">{leader.name}</div><div className="mt-1 text-xs text-slate-500">当前第 1 名</div><div className="mt-3 rounded-2xl bg-slate-900 px-3 py-2 text-sm text-slate-400">{valueLabel} <span className="font-black text-slate-100">{leader.value}</span> 次</div></div><div className="space-y-2">{players.slice(0, 4).map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 px-3 py-2 text-sm"><span className="font-bold">#{index + 1} {player.avatar} {player.name}</span><span className="font-black">{player.value}</span></div>)}</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无有效数据</div>}</Card>;
+  return <Card><div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="text-xl font-black">{title}</h3><p className="text-sm text-slate-400">{subtitle}</p></div><Pill className="bg-slate-800 text-slate-300">{badge}</Pill></div>{leader && leader.value > 0 ? <div className="space-y-3"><div className="rounded-3xl border border-slate-700 bg-slate-950 p-4 text-center"><div className="mx-auto flex justify-center"><UserBadge player={leader} size="h-14 w-14" text="text-xl" /></div><div className="mt-3 text-xl font-black">{leader.name}</div><div className="mt-1 text-xs text-slate-500">当前第 1 名</div><div className="mt-3 rounded-2xl bg-slate-900 px-3 py-2 text-sm text-slate-400">{valueLabel} <span className="font-black text-slate-100">{leader.value}</span> 次</div></div><div className="space-y-2">{players.slice(0, 4).map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 px-3 py-2 text-sm"><span className="font-bold">#{index + 1} {player.name}</span><span className="font-black">{player.value}</span></div>)}</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无有效数据</div>}</Card>;
 }
 
 function PredictionStyleRankingsPanel({ predictionStyleRankings }) {
@@ -1417,16 +1819,16 @@ function PredictionStyleRankingsPanel({ predictionStyleRankings }) {
 }
 
 function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers }) {
-  return <div className="grid gap-5 lg:grid-cols-3"><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">最高连胜排名</h3><p className="text-sm text-slate-400">连续猜中胜平负即计入连胜。</p></div><Pill className="bg-yellow-500/15 text-yellow-200">大预言家</Pill></div><div className="space-y-3">{streakRankings.map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-3"><div className="flex items-center gap-3"><AvatarBadge size="h-9 w-9" text="text-lg">{player.avatar}</AvatarBadge><div><div className="font-black">#{index + 1} {player.name}</div>{index === 0 && <div className="text-xs text-yellow-200">称号：大预言家</div>}</div></div><div className="text-2xl font-black">{player.maxStreak}</div></div>)}</div></Card><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">反向明灯榜</h3><p className="text-sm text-slate-400">当前总分最低的玩家。</p></div><Pill className="bg-rose-500/15 text-rose-200">毒奶之王</Pill></div>{reverseLightPlayer ? <div className="rounded-3xl border border-rose-300/20 bg-rose-500/10 p-5 text-center"><div className="mx-auto flex justify-center"><AvatarBadge size="h-16 w-16" text="text-3xl">{reverseLightPlayer.avatar}</AvatarBadge></div><div className="mt-3 text-2xl font-black">{reverseLightPlayer.name}</div><div className="mt-1 text-sm text-rose-100">称号：毒奶之王</div><div className="mt-4 rounded-2xl bg-slate-950 p-3 text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无数据</div>}</Card><Card><div className="mb-4"><h3 className="text-xl font-black">每日最佳玩家</h3><p className="text-sm text-slate-400">记录每个比赛日得分最高的人。</p></div><div className="max-h-[420px] space-y-3 overflow-auto pr-1">{dailyBestPlayers.length ? dailyBestPlayers.map((day) => <div key={day.date} className="rounded-2xl bg-slate-800/60 p-3"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{day.date}</div><Pill className="bg-slate-900 text-slate-300">{day.matchCount}场</Pill></div>{day.winners.length ? <div className="space-y-2">{day.winners.map((player) => <div key={player.id} className="flex items-center justify-between rounded-xl bg-slate-950 px-3 py-2"><span>{player.avatar} {player.name}</span><span className="font-black">{day.topScore}分</span></div>)}</div> : <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>}</div>) : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}</div></Card></div>;
+  return <div className="grid gap-5 lg:grid-cols-3"><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">最高连胜排名</h3><p className="text-sm text-slate-400">连续猜中胜平负即计入连胜。</p></div><Pill className="bg-yellow-500/15 text-yellow-200">大预言家</Pill></div><div className="space-y-3">{streakRankings.map((player, index) => <div key={player.id} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-3"><div className="flex items-center gap-3"><UserBadge player={player} size="h-9 w-9" /><div><div className="font-black">#{index + 1} {player.name}</div>{index === 0 && <div className="text-xs text-yellow-200">称号：大预言家</div>}</div></div><div className="text-2xl font-black">{player.maxStreak}</div></div>)}</div></Card><Card><div className="mb-4 flex items-center justify-between"><div><h3 className="text-xl font-black">反向明灯榜</h3><p className="text-sm text-slate-400">当前总分最低的玩家。</p></div><Pill className="bg-rose-500/15 text-rose-200">毒奶之王</Pill></div>{reverseLightPlayer ? <div className="rounded-3xl border border-rose-300/20 bg-rose-500/10 p-5 text-center"><div className="mx-auto flex justify-center"><UserBadge player={reverseLightPlayer} size="h-16 w-16" text="text-xl" /></div><div className="mt-3 text-2xl font-black">{reverseLightPlayer.name}</div><div className="mt-1 text-sm text-rose-100">称号：毒奶之王</div><div className="mt-4 rounded-2xl bg-slate-950 p-3 text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div></div> : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无数据</div>}</Card><Card><div className="mb-4"><h3 className="text-xl font-black">每日最佳玩家</h3><p className="text-sm text-slate-400">记录每个比赛日得分最高的人。</p></div><div className="max-h-[420px] space-y-3 overflow-auto pr-1">{dailyBestPlayers.length ? dailyBestPlayers.map((day) => <div key={day.date} className="rounded-2xl bg-slate-800/60 p-3"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{day.date}</div><Pill className="bg-slate-900 text-slate-300">{day.matchCount}场</Pill></div>{day.winners.length ? <div className="space-y-2">{day.winners.map((player) => <div key={player.id} className="flex items-center justify-between rounded-xl bg-slate-950 px-3 py-2"><span>{player.name}</span><span className="font-black">{day.topScore}分</span></div>)}</div> : <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>}</div>) : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}</div></Card></div>;
 }
 
 function RankTrendChart({ players, rankingTrend }) {
   if (!rankingTrend.length) return <Card><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="mt-1 text-sm text-slate-400">还没有已结算比赛，结算后这里会自动生成积分折线图。</p></div><Pill className="bg-slate-800 text-slate-300">等待结算</Pill></div></Card>;
   const lineColors = ["#fbbf24", "#60a5fa", "#34d399", "#fb7185", "#a78bfa", "#f97316", "#22d3ee", "#e879f9"];
-  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="text-sm text-slate-400">每结算一场比赛后自动刷新。纵轴显示玩家累计积分。</p></div><Pill className="bg-slate-800 text-slate-100">实时更新</Pill></div><div className="h-80 rounded-2xl border border-slate-700 bg-slate-950 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(15,23,42,0.96)", border: "1px solid rgba(148,163,184,0.35)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={`${player.avatar} ${player.name}`} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
+  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="text-sm text-slate-400">每结算一场比赛后自动刷新。纵轴显示玩家累计积分。</p></div><Pill className="bg-slate-800 text-slate-100">实时更新</Pill></div><div className="h-80 rounded-2xl border border-slate-700 bg-slate-950 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(15,23,42,0.96)", border: "1px solid rgba(148,163,184,0.35)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={player.name} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLock, funResults, onSetFunResults }) {
+function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLock, funResults, onSetFunResults, worldCupResults, updateWorldCupResult, clearWorldCupResult }) {
   return (
     <section className="mt-6 space-y-5">
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
@@ -1452,7 +1854,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLo
                 <div className="space-y-2">
                   {players.map((player) => {
                     const pred = predictions.find((p) => p.playerId === player.id && p.matchId === match.id);
-                    return <div key={player.id} className="flex items-center justify-between rounded-xl bg-slate-900 px-3 py-2 text-sm"><span>{player.avatar} {player.name}</span><span className="text-slate-500">{pred ? `${pred.home}:${pred.away}` : "未竞猜"}</span><span className="font-black">+{calculatePoints(pred, match)}</span></div>;
+                    return <div key={player.id} className="flex items-center justify-between rounded-xl bg-slate-900 px-3 py-2 text-sm"><span>{player.name}</span><span className="text-slate-500">{pred ? `${pred.home}:${pred.away}` : "未竞猜"}</span><span className="font-black">+{calculatePoints(pred, match)}</span></div>;
                   })}
                 </div>
               </div>
@@ -1460,7 +1862,60 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLo
           </div>
         </Card>
       </div>
+      <WorldCupResultsAdminCard results={worldCupResults} onUpdate={updateWorldCupResult} onClear={clearWorldCupResult} />
     </section>
+  );
+}
+
+function WorldCupResultsAdminCard({ results, onUpdate, onClear }) {
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div>
+          <h2 className="text-xl font-black">世界杯完整赛程赛果</h2>
+          <p className="text-sm text-slate-400">用于小组积分榜统计，按场次编号写入 Supabase。</p>
+        </div>
+        <Pill className="bg-slate-800 text-slate-300">{Object.keys(results).length} 场已录入</Pill>
+      </div>
+      <div className="max-h-[560px] space-y-3 overflow-auto pr-1">
+        {COMPLETE_WORLD_CUP_SCHEDULE.map((match) => (
+          <WorldCupResultAdminRow key={match.no} match={match} result={results[match.no]} onUpdate={onUpdate} onClear={onClear} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function WorldCupResultAdminRow({ match, result, onUpdate, onClear }) {
+  const [homeScore, setHomeScore] = useState(result?.homeScore ?? "");
+  const [awayScore, setAwayScore] = useState(result?.awayScore ?? "");
+
+  React.useEffect(() => {
+    setHomeScore(result?.homeScore ?? "");
+    setAwayScore(result?.awayScore ?? "");
+  }, [result?.homeScore, result?.awayScore]);
+
+  return (
+    <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="mb-2 flex flex-wrap gap-2">
+            <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
+            <Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill>
+            {result ? <Pill className="bg-emerald-500/15 text-emerald-200">已录入</Pill> : <Pill className="bg-slate-800 text-slate-400">未录入</Pill>}
+          </div>
+          <div className="font-black">{teamName(match.home)} vs {teamName(match.away)}</div>
+          <div className="text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.city}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="number" min="0" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
+          <span className="text-slate-500">:</span>
+          <input type="number" min="0" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
+          <button onClick={() => onUpdate(match.no, Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600">保存</button>
+          <DarkButton onClick={() => onClear(match.no)} className="px-3 py-2 text-sm font-black">清除</DarkButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
