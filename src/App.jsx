@@ -11,6 +11,7 @@ import {
   LogOut,
   Mail,
   Medal,
+  Plus,
   Search,
   Settings,
   ShieldCheck,
@@ -214,7 +215,26 @@ const scheduleRows = [
   [104, "决赛", "第101场胜者", "第102场胜者", "2026-07-20T03:00:00+08:00", "纽约/新泽西体育场（大都会人寿体育场）", "东卢瑟福"],
 ];
 
-const COMPLETE_WORLD_CUP_SCHEDULE = scheduleRows.map(([no, group, home, away, kickoff, stadium, city]) => ({ no, group, home, away, kickoff, stadium, city }));
+const FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE = scheduleRows.map(([no, group, home, away, kickoff, stadium, city]) => ({
+  id: String(no),
+  fixtureId: String(no),
+  resultId: no,
+  no,
+  round: group,
+  stage: getStageFromScheduleGroup(group),
+  group,
+  home,
+  away,
+  homeLogo: "",
+  awayLogo: "",
+  kickoff,
+  localDate: "",
+  localTime: "",
+  location: stadium,
+  stadium,
+  city,
+  source: "fallback",
+}));
 
 const WORLD_CUP_GOAL_REFERENCES = [
   { edition: "2022 卡塔尔世界杯", goals: 172 },
@@ -224,6 +244,155 @@ const WORLD_CUP_GOAL_REFERENCES = [
 const emptyFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
 const DEFAULT_AVATAR_EMOJI = "⚽";
 const AVATAR_EMOJIS = ["⚽", "🏆", "🥅", "🔥", "⭐", "👑", "💪", "🎯", "🚀", "🦁", "🐯", "🐼", "🦊", "🐲", "😎"];
+const WORLDCUP_API_KEY = import.meta.env.VITE_WORLDCUP_API_KEY;
+const WORLDCUP_FIXTURES_URL = "https://api.worldcupapi.com/fixtures";
+
+const GROUP_ID_LABELS = {
+  4286: "A组",
+  4287: "B组",
+  4288: "C组",
+  4289: "D组",
+  4290: "E组",
+  4291: "F组",
+  4292: "G组",
+  4293: "H组",
+  4297: "I组",
+  4296: "J组",
+  4295: "K组",
+  4294: "L组",
+};
+
+const LOCATION_TIME_ZONES = [
+  ["Mexico City", "America/Mexico_City"],
+  ["Zapopan", "America/Mexico_City"],
+  ["Guadalupe", "America/Monterrey"],
+  ["Toronto", "America/Toronto"],
+  ["Vancouver", "America/Vancouver"],
+  ["Inglewood", "America/Los_Angeles"],
+  ["Santa Clara", "America/Los_Angeles"],
+  ["Seattle", "America/Los_Angeles"],
+  ["Houston", "America/Chicago"],
+  ["Arlington", "America/Chicago"],
+  ["Kansas City", "America/Chicago"],
+  ["Atlanta", "America/New_York"],
+  ["Philadelphia", "America/New_York"],
+  ["East Rutherford", "America/New_York"],
+  ["Foxborough", "America/New_York"],
+  ["Miami Gardens", "America/New_York"],
+];
+
+function getStageFromScheduleGroup(group) {
+  if (/^[A-L]组$/.test(group)) return "GROUP";
+  if (group.includes("32")) return "R32";
+  if (group.includes("16")) return "R16";
+  if (group.includes("四分之一") || group.includes("8")) return "QF";
+  if (group.includes("半决赛")) return "SF";
+  if (group.includes("三四")) return "THIRD";
+  if (group.includes("决赛")) return "FINAL";
+  return "GROUP";
+}
+
+function getStageFromApiRound(round) {
+  const value = String(round || "").toUpperCase();
+  if (["1", "2", "3"].includes(value)) return "GROUP";
+  if (value === "R32") return "R32";
+  if (value === "R16") return "R16";
+  if (value === "QF") return "QF";
+  if (value === "SF") return "SF";
+  if (value === "3PPO") return "THIRD";
+  if (value === "F") return "FINAL";
+  return "GROUP";
+}
+
+function getGroupLabelFromFixture(fixture) {
+  if (fixture.group_id && GROUP_ID_LABELS[fixture.group_id]) return GROUP_ID_LABELS[fixture.group_id];
+  const stage = getStageFromApiRound(fixture.round);
+  if (stage === "GROUP") return `第${fixture.round}轮`;
+  return STAGES[stage]?.label || String(fixture.round || "");
+}
+
+function getTimeZoneForLocation(location) {
+  const found = LOCATION_TIME_ZONES.find(([needle]) => String(location || "").includes(needle));
+  return found?.[1] || null;
+}
+
+function getTimeZoneOffset(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const asUTC = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second));
+  return asUTC - date.getTime();
+}
+
+function zonedDateTimeToIso(dateText, timeText, timeZone) {
+  const [year, month, day] = String(dateText).split("-").map(Number);
+  const [hour, minute, second = 0] = String(timeText).split(":").map(Number);
+  const guess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const offset = getTimeZoneOffset(guess, timeZone);
+  return new Date(guess.getTime() - offset).toISOString();
+}
+
+function normalizeWorldCupFixture(fixture, index) {
+  const stage = getStageFromApiRound(fixture.round);
+  const timeZone = getTimeZoneForLocation(fixture.location);
+  if (!timeZone) throw new Error(`无法识别赛程地点时区：${fixture.location}`);
+  return {
+    id: String(fixture.id),
+    fixtureId: String(fixture.id),
+    resultId: Number(fixture.id),
+    no: index + 1,
+    round: String(fixture.round || ""),
+    stage,
+    group: getGroupLabelFromFixture(fixture),
+    home: fixture.home?.name || "TBD",
+    away: fixture.away?.name || "TBD",
+    homeLogo: fixture.home?.logo || "",
+    awayLogo: fixture.away?.logo || "",
+    homeTeamId: fixture.home?.id || null,
+    awayTeamId: fixture.away?.id || null,
+    kickoff: zonedDateTimeToIso(fixture.date, fixture.time, timeZone),
+    localDate: fixture.date,
+    localTime: fixture.time,
+    location: fixture.location || "",
+    stadium: fixture.location || "",
+    city: String(fixture.location || "").split(",").slice(1).join(",").trim(),
+    status: "open",
+    homeScore: null,
+    awayScore: null,
+    source: "worldcupapi",
+  };
+}
+
+function getFallbackMatches() {
+  return FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE.map((match) => ({
+    ...match,
+    status: "open",
+    homeScore: null,
+    awayScore: null,
+  }));
+}
+
+async function fetchWorldCupFixtures() {
+  if (!WORLDCUP_API_KEY) throw new Error("缺少 VITE_WORLDCUP_API_KEY");
+  const fixtures = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(WORLDCUP_API_KEY)}&page=${page}`);
+    if (!response.ok) throw new Error(`WorldCupAPI 请求失败：${response.status}`);
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length === 0) break;
+    fixtures.push(...data);
+  }
+  if (!fixtures.length) throw new Error("WorldCupAPI 没有返回赛程");
+  return fixtures.map(normalizeWorldCupFixture);
+}
 
 function mapProfile(row) {
   return {
@@ -260,9 +429,9 @@ function mapFunPredictions(rows) {
   }, {});
 }
 
-function mergeMatchOverrides(rows) {
+function mergeMatchOverrides(rows, baseMatches = getFallbackMatches()) {
   const overrides = new Map(rows.map((row) => [row.match_id, row]));
-  return initialMatches.map((match) => {
+  return baseMatches.map((match) => {
     const row = overrides.get(match.id);
     if (!row) return { ...match };
     return {
@@ -325,7 +494,25 @@ const tabs = [
 ];
 
 function teamName(name) {
-  return `${name} ${TEAM_FLAGS[name] || ""}`.trim();
+  return String(name || "").trim();
+}
+
+function getWorldCupResultKey(match) {
+  return match?.resultId || Number(match?.fixtureId) || Number(match?.id) || match?.no;
+}
+
+function TeamLogo({ logo, name, size = "h-6 w-6" }) {
+  if (!logo) return <span className={`inline-flex ${size} items-center justify-center rounded-full bg-slate-800 text-xs text-slate-400`}>?</span>;
+  return <img src={logo} alt={`${name} logo`} className={`${size} rounded-full bg-slate-900 object-contain`} loading="lazy" />;
+}
+
+function TeamName({ name, logo, className = "" }) {
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-2 ${className}`}>
+      <TeamLogo logo={logo} name={name} />
+      <span className="truncate">{name}</span>
+    </span>
+  );
 }
 
 function getOutcome(home, away) {
@@ -530,8 +717,8 @@ function groupByDate(matches) {
   }, {});
 }
 
-function createEmptyTeamStanding(group, team) {
-  return { group, team, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 };
+function createEmptyTeamStanding(group, team, logo = "") {
+  return { group, team, logo, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 };
 }
 
 function buildWorldCupStandings(schedule, results) {
@@ -539,14 +726,14 @@ function buildWorldCupStandings(schedule, results) {
   const tableMap = new Map();
 
   groupMatches.forEach((match) => {
-    [match.home, match.away].forEach((team) => {
+    [[match.home, match.homeLogo], [match.away, match.awayLogo]].forEach(([team, logo]) => {
       const key = `${match.group}-${team}`;
-      if (!tableMap.has(key)) tableMap.set(key, createEmptyTeamStanding(match.group, team));
+      if (!tableMap.has(key)) tableMap.set(key, createEmptyTeamStanding(match.group, team, logo));
     });
   });
 
   groupMatches.forEach((match) => {
-    const result = results[match.no];
+    const result = results[getWorldCupResultKey(match)];
     if (!isWorldCupResultSettled(result)) return;
 
     const homeKey = `${match.group}-${match.home}`;
@@ -831,12 +1018,14 @@ export default function WorldCupPredictionMVP() {
   const [activeTab, setActiveTab] = useState("home");
   const [players, setPlayers] = useState(initialPlayers);
   const [currentPlayerId, setCurrentPlayerId] = useState("");
-  const [matches, setMatches] = useState(initialMatches);
+  const [completeSchedule, setCompleteSchedule] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
+  const [scheduleSource, setScheduleSource] = useState("fallback");
+  const [matches, setMatches] = useState(getFallbackMatches());
   const [predictions, setPredictions] = useState([]);
   const [funPredictions, setFunPredictions] = useState({});
   const [funResults, setFunResults] = useState(emptyFunResults);
   const [worldCupResults, setWorldCupResults] = useState({});
-  const [selectedMatchId, setSelectedMatchId] = useState("m1");
+  const [selectedMatchId, setSelectedMatchId] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE[0]?.id || "");
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("ALL");
@@ -899,7 +1088,7 @@ export default function WorldCupPredictionMVP() {
     if (error) throw error;
   }
 
-  async function loadSupabaseData() {
+  async function loadSupabaseData(baseMatches) {
     const [
       profilesResult,
       predictionsResult,
@@ -926,10 +1115,11 @@ export default function WorldCupPredictionMVP() {
     ].find((result) => result.error)?.error;
     if (firstError) throw firstError;
 
+    const validMatchIds = new Set(baseMatches.map((match) => match.id));
     setPlayers((profilesResult.data || []).map(mapProfile));
-    setPredictions((predictionsResult.data || []).map(mapPrediction));
+    setPredictions((predictionsResult.data || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
     setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
-    setMatches(mergeMatchOverrides(matchOverridesResult.data || []));
+    setMatches(mergeMatchOverrides(matchOverridesResult.data || [], baseMatches));
     setWorldCupResults(mapWorldCupResults(worldCupResultsResult.data || []));
     setFunResults(mapFunResults(funResultsResult.data));
   }
@@ -941,7 +1131,9 @@ export default function WorldCupPredictionMVP() {
         setPlayers([]);
         setPredictions([]);
         setFunPredictions({});
-        setMatches(initialMatches);
+        setCompleteSchedule(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
+        setScheduleSource("fallback");
+        setMatches(getFallbackMatches());
         setWorldCupResults({});
         setFunResults(emptyFunResults);
         setCurrentPlayerId("");
@@ -952,9 +1144,22 @@ export default function WorldCupPredictionMVP() {
       setDataLoading(true);
       setDataError("");
       try {
+        let baseSchedule = FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE;
+        let baseMatches = getFallbackMatches();
+        try {
+          baseSchedule = await fetchWorldCupFixtures();
+          baseMatches = baseSchedule.map((match) => ({ ...match }));
+          setScheduleSource("worldcupapi");
+        } catch (scheduleError) {
+          setScheduleSource("fallback");
+          setDataError(`${scheduleError.message || "官方赛程加载失败"}，已使用本地备用赛程。`);
+        }
+        setCompleteSchedule(baseSchedule);
+        setMatches(baseMatches);
+        setSelectedMatchId((prev) => (baseMatches.some((match) => match.id === prev) ? prev : baseMatches[0]?.id || ""));
         await ensureProfile(session.user);
         if (cancelled) return;
-        await loadSupabaseData();
+        await loadSupabaseData(baseMatches);
         if (cancelled) return;
         setCurrentPlayerId(session.user.id);
         setSelectedProfilePlayerId((prev) => prev || session.user.id);
@@ -1063,7 +1268,7 @@ export default function WorldCupPredictionMVP() {
   const groupedMatches = groupByDate(filteredMatches);
   const unPredictedCount = matches.filter((match) => !predictions.some((p) => p.playerId === currentPlayerId && p.matchId === match.id)).length;
   const settledCount = matches.filter(isSettledMatch).length;
-  const worldCupStandings = useMemo(() => buildWorldCupStandings(COMPLETE_WORLD_CUP_SCHEDULE, worldCupResults), [worldCupResults]);
+  const worldCupStandings = useMemo(() => buildWorldCupStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
 
   async function upsertPrediction(matchId, home, away) {
@@ -1280,14 +1485,14 @@ export default function WorldCupPredictionMVP() {
         </aside>
         <main className="min-w-0 flex-1">
           {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "completeSchedule" && <FullScheduleCalendar />}
+          {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} results={worldCupResults} onUpdateResult={updateWorldCupResult} onClearResult={clearWorldCupResult} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatch={selectedMatch} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
           {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} predictions={predictions} matches={matches} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} worldCupResults={worldCupResults} updateWorldCupResult={updateWorldCupResult} clearWorldCupResult={clearWorldCupResult} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} worldCupResults={worldCupResults} updateWorldCupResult={updateWorldCupResult} clearWorldCupResult={clearWorldCupResult} completeSchedule={completeSchedule} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -1378,7 +1583,7 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
             <MatchCountdown match={match} now={now} />
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
           </div>
-          <div className="text-lg font-black">{teamName(match.home)} <span className="mx-2 text-slate-500">vs</span> {teamName(match.away)}</div>
+          <div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
           <div className="mt-1 text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
         <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-2 text-xs text-slate-500">我的预测：{pred.home}:{pred.away}</div>}</div>
@@ -1445,7 +1650,7 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
           {bestThirdTeams.slice(0, 8).map((team, index) => (
             <div key={`${team.group}-${team.team}`} className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3">
               <div className="mb-1 text-xs font-black text-amber-200">小组第三竞争 #{index + 1}</div>
-              <div className="font-black">{teamName(team.team)}</div>
+              <div className="font-black"><TeamName name={team.team} logo={team.logo} /></div>
               <div className="mt-1 text-xs text-slate-400">{team.group} · {team.points}分 · 净胜球 {team.goalDifference} · 进球 {team.goalsFor}</div>
             </div>
           ))}
@@ -1491,7 +1696,7 @@ function GroupStandingsCard({ group, table }) {
               return (
                 <tr key={team.team} className="border-t border-slate-700 bg-slate-950/60">
                   <td className="px-3 py-3 font-black">#{index + 1}</td>
-                  <td className="px-3 py-3 font-black">{teamName(team.team)}</td>
+                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} /></td>
                   <td className="px-3 py-3 text-center text-lg font-black text-emerald-200">{team.points}</td>
                   <td className="px-3 py-3 text-center">{team.played}</td>
                   <td className="px-3 py-3 text-center">{team.won}</td>
@@ -1510,13 +1715,13 @@ function GroupStandingsCard({ group, table }) {
   );
 }
 
-function FullScheduleCalendar() {
+function FullScheduleCalendar({ schedule, source }) {
   const [scheduleQuery, setScheduleQuery] = useState("");
   const [scheduleStage, setScheduleStage] = useState("ALL");
-  const filteredSchedule = useMemo(() => COMPLETE_WORLD_CUP_SCHEDULE.filter((match) => {
-    const text = `${match.no}${match.home}${match.away}${match.group}${match.stadium}${match.city}`.toLowerCase();
+  const filteredSchedule = useMemo(() => schedule.filter((match) => {
+    const text = `${match.no}${match.home}${match.away}${match.group}${match.stadium}${match.city}${match.location}`.toLowerCase();
     return text.includes(scheduleQuery.toLowerCase()) && (scheduleStage === "ALL" || match.group === scheduleStage);
-  }), [scheduleQuery, scheduleStage]);
+  }), [schedule, scheduleQuery, scheduleStage]);
   const scheduleByDate = useMemo(() => filteredSchedule.reduce((acc, match) => {
     const key = formatBeijingDateKey(match.kickoff);
     if (!acc[key]) acc[key] = [];
@@ -1524,7 +1729,7 @@ function FullScheduleCalendar() {
     acc[key].sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
     return acc;
   }, {}), [filteredSchedule]);
-  const stageOptions = ["ALL", ...Array.from(new Set(COMPLETE_WORLD_CUP_SCHEDULE.map((match) => match.group)))];
+  const stageOptions = ["ALL", ...Array.from(new Set(schedule.map((match) => match.group)))];
   return (
     <section className="mt-6 space-y-5">
       <Card>
@@ -1532,21 +1737,22 @@ function FullScheduleCalendar() {
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><CalendarDays className="h-3.5 w-3.5" /> 完整赛程 · 北京时间</div>
             <h2 className="text-3xl font-black tracking-tight">完整赛程列表</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">已录入 2026 世界杯 104 场比赛。每场比赛包含对阵球队、北京时间开球时间、小组/阶段信息、比赛球馆和城市地点。</p>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">赛程优先读取 WorldCupAPI 官方 fixtures，并统一转换为北京时间；API 失败时使用本地备用赛程。</p>
+            <Pill className={source === "worldcupapi" ? "mt-3 bg-emerald-500/15 text-emerald-200" : "mt-3 bg-amber-500/15 text-amber-200"}>{source === "worldcupapi" ? "WorldCupAPI 实时赛程" : "本地备用赛程"}</Pill>
           </div>
-          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">比赛总数</div><div className="mt-1 text-3xl font-black">{COMPLETE_WORLD_CUP_SCHEDULE.length}</div></div>
+          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">比赛总数</div><div className="mt-1 text-3xl font-black">{schedule.length}</div></div>
         </div>
       </Card>
       <Card>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div><h3 className="text-xl font-black">快速浏览</h3><p className="text-sm text-slate-400">适合手机端按日期查看，所有球队、球馆和城市均为中文显示。</p></div>
+          <div><h3 className="text-xl font-black">快速浏览</h3><p className="text-sm text-slate-400">适合手机端按日期查看，可按球队、球馆、城市或阶段搜索。</p></div>
           <div className="flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input value={scheduleQuery} onChange={(e) => setScheduleQuery(e.target.value)} placeholder="搜索球队 / 球馆 / 城市" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500 sm:w-64" /></div><select value={scheduleStage} onChange={(e) => setScheduleStage(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none">{stageOptions.map((stage) => <option key={stage} value={stage}>{stage === "ALL" ? "全部小组/阶段" : stage}</option>)}</select></div>
         </div>
       </Card>
       <Card>
         <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">按日期列表</h3><p className="text-sm text-slate-400">每个比赛日集中显示，方便赛前快速查看当天赛程。</p></div><Pill className="bg-slate-800 text-slate-300">{filteredSchedule.length} 场</Pill></div>
         <div className="space-y-4">
-          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-300"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.no} match={match} />)}</div></div>)}
+          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-300"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.id} match={match} />)}</div></div>)}
         </div>
       </Card>
     </section>
@@ -1554,7 +1760,7 @@ function FullScheduleCalendar() {
 }
 
 function ScheduleLargeCard({ match }) {
-  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill><Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill><Pill className="bg-slate-800 text-slate-100">{formatBeijingTime(match.kickoff)} 北京时间</Pill></div><div className="text-lg font-black">{teamName(match.home)} <span className="mx-1 text-slate-500">vs</span> {teamName(match.away)}</div><div className="mt-2 text-sm text-slate-400">{match.stadium}</div><div className="text-xs text-slate-500">{match.city}</div></div>;
+  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill><Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill><Pill className="bg-slate-800 text-slate-100">{formatBeijingTime(match.kickoff)} 北京时间</Pill></div><div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div><div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div><div className="text-xs text-slate-500">{match.city}</div></div>;
 }
 
 function MatchDetail({ match, players, predictions, currentPlayerId, onSubmit, now = new Date(), onOpenPlayerProfile }) {
@@ -1567,8 +1773,8 @@ function MatchDetail({ match, players, predictions, currentPlayerId, onSubmit, n
   const stage = STAGES[match.stage] || STAGES.GROUP;
   return (
     <Card className="lg:sticky lg:top-6 lg:self-start">
-      <div className="mb-4 flex items-start justify-between gap-3"><div><div className="mb-2 flex flex-wrap gap-2"><Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill><MatchStatus match={match} /><MatchCountdown match={match} now={now} /></div><h2 className="text-2xl font-black leading-tight">{teamName(match.home)} vs {teamName(match.away)}</h2><p className="mt-1 text-sm text-slate-500">{formatDateTime(match.kickoff)} · {match.group}</p></div><div className="rounded-2xl bg-slate-800 p-3">{locked ? <Lock className="h-5 w-5" /> : <Unlock className="h-5 w-5" />}</div></div>
-      <div className="rounded-2xl bg-slate-950 p-4"><div className="text-sm font-bold text-slate-300">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={teamName(match.home)} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black text-slate-500">:</div><ScoreInput label={teamName(match.away)} value={away} disabled={locked} onChange={setAway} /></div><DarkButton disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 px-4 py-3 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</DarkButton>{locked && <div className="mt-3 text-center text-xs text-slate-500">比赛已锁定，不能再修改预测。</div>}</div>
+      <div className="mb-4 flex items-start justify-between gap-3"><div><div className="mb-2 flex flex-wrap gap-2"><Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill><MatchStatus match={match} /><MatchCountdown match={match} now={now} /></div><h2 className="flex flex-wrap items-center gap-2 text-2xl font-black leading-tight"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></h2><p className="mt-1 text-sm text-slate-500">{formatDateTime(match.kickoff)} · {match.group}</p></div><div className="rounded-2xl bg-slate-800 p-3">{locked ? <Lock className="h-5 w-5" /> : <Unlock className="h-5 w-5" />}</div></div>
+      <div className="rounded-2xl bg-slate-950 p-4"><div className="text-sm font-bold text-slate-300">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black text-slate-500">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><DarkButton disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 px-4 py-3 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</DarkButton>{locked && <div className="mt-3 text-center text-xs text-slate-500">比赛已锁定，不能再修改预测。</div>}</div>
       <div className="mt-5"><div className="mb-3 flex items-center justify-between"><h3 className="font-black">朋友预测</h3>{!showAllPredictions && <Pill className="bg-slate-800 text-slate-400">开赛后公开</Pill>}</div><div className="space-y-2">{players.map((player) => { const pred = predictions.find((p) => p.playerId === player.id && p.matchId === match.id); const isMe = player.id === currentPlayerId; const canShow = showAllPredictions || isMe; const points = calculatePoints(pred, match); return <div key={player.id} className="rounded-2xl bg-slate-800/60 p-3"><div className="flex items-center justify-between gap-3"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex items-center gap-3 text-left"><UserBadge player={player} size="h-9 w-9" /><div><div className="font-bold hover:text-cyan-200">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{pred ? "已提交" : "未提交"}</div></div></button><div className="text-right">{canShow ? <><div className="text-lg font-black">{pred ? `${pred.home}:${pred.away}` : "--"}</div>{match.status === "settled" && <div className="text-xs text-slate-500">{explainPoints(pred, match)} · +{points}</div>}</> : <div className="text-sm text-slate-500">已隐藏</div>}</div></div></div>; })}</div></div>
     </Card>
   );
@@ -1795,7 +2001,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
                 <Pill className="bg-indigo-500/15 text-indigo-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
                 {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
               </div>
-              <div className="font-black">{teamName(match.home)} <span className="text-slate-500">vs</span> {teamName(match.away)}</div>
+              <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
               <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
               <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
             </div>
@@ -1917,7 +2123,7 @@ function RankTrendChart({ players, rankingTrend }) {
   return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="text-sm text-slate-400">每结算一场比赛后自动刷新。纵轴显示玩家累计积分。</p></div><Pill className="bg-slate-800 text-slate-100">实时更新</Pill></div><div className="h-80 rounded-2xl border border-slate-700 bg-slate-950 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(15,23,42,0.96)", border: "1px solid rgba(148,163,184,0.35)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={player.name} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLock, funResults, onSetFunResults, worldCupResults, updateWorldCupResult, clearWorldCupResult }) {
+function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLock, funResults, onSetFunResults, worldCupResults, updateWorldCupResult, clearWorldCupResult, completeSchedule }) {
   return (
     <section className="mt-6 space-y-5">
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
@@ -1935,7 +2141,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLo
               <div key={match.id} className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <div className="font-black">{teamName(match.home)} {match.homeScore}:{match.awayScore} {teamName(match.away)}</div>
+                    <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span>{match.homeScore}:{match.awayScore}</span><TeamName name={match.away} logo={match.awayLogo} /></div>
                     <div className="text-xs text-slate-500">{(STAGES[match.stage] || STAGES.GROUP).label} · 倍率 x{(STAGES[match.stage] || STAGES.GROUP).multiplier}</div>
                   </div>
                   <Pill className="bg-emerald-500/15 text-emerald-200">已结算</Pill>
@@ -1951,12 +2157,12 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, toggleLo
           </div>
         </Card>
       </div>
-      <WorldCupResultsAdminCard results={worldCupResults} onUpdate={updateWorldCupResult} onClear={clearWorldCupResult} />
+      <WorldCupResultsAdminCard schedule={completeSchedule} results={worldCupResults} onUpdate={updateWorldCupResult} onClear={clearWorldCupResult} />
     </section>
   );
 }
 
-function WorldCupResultsAdminCard({ results, onUpdate, onClear }) {
+function WorldCupResultsAdminCard({ schedule, results, onUpdate, onClear }) {
   return (
     <Card>
       <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-end">
@@ -1967,8 +2173,8 @@ function WorldCupResultsAdminCard({ results, onUpdate, onClear }) {
         <Pill className="bg-slate-800 text-slate-300">{Object.keys(results).length} 场已录入</Pill>
       </div>
       <div className="max-h-[560px] space-y-3 overflow-auto pr-1">
-        {COMPLETE_WORLD_CUP_SCHEDULE.map((match) => (
-          <WorldCupResultAdminRow key={match.no} match={match} result={results[match.no]} onUpdate={onUpdate} onClear={onClear} />
+        {schedule.map((match) => (
+          <WorldCupResultAdminRow key={match.id} match={match} result={results[getWorldCupResultKey(match)]} onUpdate={onUpdate} onClear={onClear} />
         ))}
       </div>
     </Card>
@@ -1993,15 +2199,15 @@ function WorldCupResultAdminRow({ match, result, onUpdate, onClear }) {
             <Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill>
             {result ? <Pill className="bg-emerald-500/15 text-emerald-200">已录入</Pill> : <Pill className="bg-slate-800 text-slate-400">未录入</Pill>}
           </div>
-          <div className="font-black">{teamName(match.home)} vs {teamName(match.away)}</div>
+          <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
           <div className="text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.city}</div>
         </div>
         <div className="flex items-center gap-2">
           <input type="number" min="0" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
           <span className="text-slate-500">:</span>
           <input type="number" min="0" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
-          <button onClick={() => onUpdate(match.no, Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600">保存</button>
-          <DarkButton onClick={() => onClear(match.no)} className="px-3 py-2 text-sm font-black">清除</DarkButton>
+          <button onClick={() => onUpdate(getWorldCupResultKey(match), Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600">保存</button>
+          <DarkButton onClick={() => onClear(getWorldCupResultKey(match))} className="px-3 py-2 text-sm font-black">清除</DarkButton>
         </div>
       </div>
     </div>
@@ -2014,7 +2220,7 @@ function AdminMatchRow({ match, onResult, onToggleLock }) {
   React.useEffect(() => { setHomeScore(match.homeScore ?? ""); setAwayScore(match.awayScore ?? ""); }, [match.homeScore, match.awayScore]);
   const canToggle = match.status !== "settled";
   const stage = STAGES[match.stage] || STAGES.GROUP;
-  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><div className="mb-2 flex flex-wrap gap-2"><Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill><Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill><MatchStatus match={match} /></div><div className="font-black">{teamName(match.home)} vs {teamName(match.away)}</div><div className="text-xs text-slate-500">{formatDateTime(match.kickoff)}</div></div><div className="flex items-center gap-2"><input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(e.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" /><span className="text-slate-500">:</span><input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(e.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" /><button onClick={() => onResult(match.id, Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:scale-105 hover:bg-emerald-600">结算</button><DarkButton disabled={!canToggle} onClick={() => onToggleLock(match.id)} className="px-3 py-2 text-sm font-black">{match.status === "open" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</DarkButton></div></div></div>;
+  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><div className="mb-2 flex flex-wrap gap-2"><Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill><Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill><MatchStatus match={match} /></div><div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div><div className="text-xs text-slate-500">{formatDateTime(match.kickoff)}</div></div><div className="flex items-center gap-2"><input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(e.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" /><span className="text-slate-500">:</span><input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(e.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" /><button onClick={() => onResult(match.id, Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:scale-105 hover:bg-emerald-600">结算</button><DarkButton disabled={!canToggle} onClick={() => onToggleLock(match.id)} className="px-3 py-2 text-sm font-black">{match.status === "open" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</DarkButton></div></div></div>;
 }
 
 function RulesPanel() {
