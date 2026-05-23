@@ -1276,10 +1276,6 @@ export default function WorldCupPredictionMVP() {
                 return <button key={tab.id} onClick={() => { if (tab.id === "playerProfile") setSelectedProfilePlayerId(currentPlayerId); setActiveTab(tab.id); }} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition ${active ? "bg-slate-800 text-slate-50 shadow-lg" : "bg-slate-900/70 text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`}><Icon className="h-4 w-4" />{tab.label}</button>;
               })}
             </nav>
-            <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950 p-4">
-              <div className="flex items-center justify-between text-sm"><span className="text-slate-400">房间邀请码</span><span className="font-black tracking-widest">WC2026</span></div>
-              <div className="mt-3 text-xs leading-relaxed text-slate-500">朋友通过邀请码进入同一个房间，提交比分预测后自动参与竞猜排行榜。</div>
-            </div>
           </Card>
         </aside>
         <main className="min-w-0 flex-1">
