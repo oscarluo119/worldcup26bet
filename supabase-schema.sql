@@ -2,9 +2,13 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null,
   username text not null,
+  avatar_emoji text not null default '⚽',
   is_admin boolean not null default false,
   joined_at timestamptz not null default now()
 );
+
+alter table public.profiles
+add column if not exists avatar_emoji text not null default '⚽';
 
 create table if not exists public.predictions (
   id uuid primary key default gen_random_uuid(),
@@ -86,6 +90,35 @@ create policy "users insert own profile"
 on public.profiles for insert
 to authenticated
 with check (id = auth.uid() and is_admin = false);
+
+create or replace function public.update_my_profile(
+  p_username text,
+  p_avatar_emoji text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_profile public.profiles;
+begin
+  update public.profiles
+  set
+    username = nullif(trim(p_username), ''),
+    avatar_emoji = coalesce(nullif(trim(p_avatar_emoji), ''), '⚽')
+  where id = auth.uid()
+  returning * into updated_profile;
+
+  if updated_profile.id is null then
+    raise exception 'Profile not found';
+  end if;
+
+  return updated_profile;
+end;
+$$;
+
+grant execute on function public.update_my_profile(text, text) to authenticated;
 
 drop policy if exists "predictions readable by signed in users" on public.predictions;
 create policy "predictions readable by signed in users"
