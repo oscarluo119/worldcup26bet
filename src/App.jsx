@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -1627,7 +1627,8 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatch={selectedMatch} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} predictions={predictions} matches={matches} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
@@ -1962,6 +1963,23 @@ function InfoRow({ label, value }) {
   return <div className="flex items-center justify-between rounded-xl bg-slate-900 px-3 py-2"><span className="text-slate-500">{label}</span><span className="font-black">{value}</span></div>;
 }
 
+function PredictionHistoryList({ items }) {
+  return <div className="space-y-3">
+    {items.length ? items.map(({ prediction, match, points }) => (
+      <div key={prediction.id} className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
+          <Pill className="bg-indigo-500/15 text-indigo-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
+          {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
+        <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
+        <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
+      </div>
+    )) : <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
+  </div>;
+}
+
 function FunResultsCard({ funResults, onSetFunResults }) {
   const [draftResults, setDraftResults] = useState(funResults);
 
@@ -2007,7 +2025,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, onUpdateAvatar, onBack }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, onUpdateAvatar, onBack, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
@@ -2127,7 +2145,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
       <Card>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-xl font-black">历史竞猜记录</h3>
+            <button type="button" onClick={() => onOpenFullHistory?.(player.id)} className="text-left"><h3 className="text-xl font-black transition hover:text-cyan-200">用户历史竞猜记录</h3></button>
             <p className="text-sm text-slate-400">只展示最近 5 条竞猜记录。</p>
           </div>
           <Pill className="bg-slate-800 text-slate-300">{history.length} 条</Pill>
@@ -2471,4 +2489,39 @@ function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggl
 
 function RulesPanel() {
   return <section className="mt-6 space-y-5"><Card><h2 className="text-2xl font-black">正式规则确认版</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">本系统只计算90分钟常规时间比分，包含伤停补时，不包含加时赛和点球大战。开赛前可以反复修改，开赛后自动锁定。</p></Card><div className="grid gap-5 lg:grid-cols-2"><Card><h3 className="mb-4 text-xl font-black">基础得分</h3><div className="space-y-3">{[["完全猜中比分", "4分"], ["猜中胜平负，并且猜中净胜球", "2分"], ["猜中胜平负，但比分不完全正确", "1分"], ["完全猜错", "0分"]].map(([label, value]) => <div key={label} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-4"><span>{label}</span><span className="text-2xl font-black">{value}</span></div>)}</div></Card><Card><h3 className="mb-4 text-xl font-black">淘汰赛倍率</h3><div className="space-y-3">{Object.entries(STAGES).map(([key, value]) => <div key={key} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-4"><span>{value.label}</span><span className="text-2xl font-black">x{value.multiplier}</span></div>)}</div></Card></div><Card><h3 className="mb-4 text-xl font-black">各阶段最高得分</h3><div className="overflow-hidden rounded-2xl border border-slate-700"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-3">阶段</th><th className="px-4 py-3">倍率</th><th className="px-4 py-3">完全比分</th><th className="px-4 py-3">胜平负+净胜球</th><th className="px-4 py-3">只中胜平负</th><th className="px-4 py-3">猜错</th></tr></thead><tbody>{Object.entries(STAGES).map(([key, value]) => <tr key={key} className="border-t border-slate-700 bg-slate-950/60"><td className="px-4 py-4 font-black">{value.label}</td><td className="px-4 py-4">x{value.multiplier}</td><td className="px-4 py-4">{4 * value.multiplier}分</td><td className="px-4 py-4">{2 * value.multiplier}分</td><td className="px-4 py-4">{1 * value.multiplier}分</td><td className="px-4 py-4">0分</td></tr>)}</tbody></table></div></Card></section>;
+}
+
+function AllHistoryPanel({ player, predictions, matches, onBack }) {
+  const history = predictions
+    .filter((prediction) => prediction.playerId === player.id)
+    .map((prediction) => {
+      const match = matches.find((item) => item.id === prediction.matchId);
+      return { prediction, match, points: calculatePoints(prediction, match) };
+    })
+    .filter((item) => item.match && isSettledMatch(item.match))
+    .sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());
+
+  return (
+    <section className="mt-6 space-y-5">
+      <Card>
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <h2 className="text-3xl font-black">{player.name} 的所有历史竞猜记录</h2>
+            <p className="mt-2 text-sm text-slate-400">这里展示该用户的全部竞猜记录，按比赛时间倒序排列。</p>
+          </div>
+          <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回个人主页</DarkButton>
+        </div>
+      </Card>
+      <Card>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-black">全部历史竞猜记录</h3>
+            <p className="text-sm text-slate-400">共 {history.length} 条。</p>
+          </div>
+          <Pill className="bg-slate-800 text-slate-300">{history.length} 条</Pill>
+        </div>
+        <PredictionHistoryList items={history} />
+      </Card>
+    </section>
+  );
 }
