@@ -2454,7 +2454,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   const history = playerPredictions.map((prediction) => {
     const match = matches.find((item) => item.id === prediction.matchId);
     return { prediction, match, points: calculatePoints(prediction, match) };
-  }).filter((item) => item.match).sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());
+  }).filter((item) => item.match && isSettledMatch(item.match)).sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());
   const recentHistory = history.slice(0, 5);
   const cleanDraftUsername = draftUsername.trim();
   const profileChanged = cleanDraftUsername !== (player.name || "").trim() || draftAvatarEmoji !== (player.avatarEmoji || DEFAULT_AVATAR_EMOJI);
@@ -2600,7 +2600,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <button type="button" onClick={() => onOpenFullHistory?.(player.id)} className="text-left"><h3 className="text-xl font-black transition hover:text-cyan-200">用户历史竞猜记录</h3></button>
-            <p className="text-sm text-slate-400">只展示最近 5 条竞猜记录。</p>
+            <p className="text-sm text-slate-400">只展示最近 5 条已结算竞猜记录。</p>
           </div>
           <Pill className="bg-slate-800 text-slate-300">{history.length} 条</Pill>
         </div>
