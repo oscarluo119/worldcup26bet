@@ -53,6 +53,24 @@ create table if not exists public.fun_results (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.live_match_states (
+  match_id text primary key,
+  fixture_id text,
+  display_home_score integer,
+  display_away_score integer,
+  match_phase text not null default 'pre_match',
+  match_clock text,
+  reg_home_score integer,
+  reg_away_score integer,
+  regulation_final_available boolean not null default false,
+  last_synced_at timestamptz not null default now(),
+  tracking_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_live_match_states_fixture_id on public.live_match_states(fixture_id);
+create index if not exists idx_live_match_states_tracking_until on public.live_match_states(tracking_until);
+
 insert into public.fun_results (id)
 values ('main')
 on conflict (id) do nothing;
@@ -63,6 +81,7 @@ alter table public.fun_predictions enable row level security;
 alter table public.match_overrides enable row level security;
 alter table public.world_cup_results enable row level security;
 alter table public.fun_results enable row level security;
+alter table public.live_match_states enable row level security;
 
 create or replace function public.is_admin()
 returns boolean
@@ -311,6 +330,12 @@ with check (public.is_admin());
 drop policy if exists "fun results readable by signed in users" on public.fun_results;
 create policy "fun results readable by signed in users"
 on public.fun_results for select
+to authenticated
+using (true);
+
+drop policy if exists "live match states readable by signed in users" on public.live_match_states;
+create policy "live match states readable by signed in users"
+on public.live_match_states for select
 to authenticated
 using (true);
 

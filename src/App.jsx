@@ -1,4 +1,5 @@
 ﻿import React, { useMemo, useState } from "react";
+import { useRef } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -600,6 +601,37 @@ function mapWorldCupResults(rows) {
   }, {});
 }
 
+function mapLiveMatchStates(rows) {
+  return rows.reduce((acc, row) => {
+    const matchKey = String(row.match_id || "");
+    const fixtureKey = String(row.fixture_id || "");
+    const value = {
+      matchId: matchKey,
+      fixtureId: fixtureKey,
+      displayHomeScore: row.display_home_score,
+      displayAwayScore: row.display_away_score,
+      matchPhase: row.match_phase || "pre_match",
+      matchClock: row.match_clock || "",
+      regHomeScore: row.reg_home_score,
+      regAwayScore: row.reg_away_score,
+      regulationFinalAvailable: Boolean(row.regulation_final_available),
+      trackingUntil: row.tracking_until,
+      updatedAt: row.updated_at,
+      lastSyncedAt: row.last_synced_at,
+    };
+    if (matchKey) acc[matchKey] = value;
+    if (fixtureKey) acc[fixtureKey] = value;
+    return acc;
+  }, {});
+}
+
+function attachLiveMatchStates(matches, liveMatchStates) {
+  return matches.map((match) => {
+    const liveState = liveMatchStates[match.id] || liveMatchStates[String(match.fixtureId || "")] || liveMatchStates[String(match.resultId || "")] || null;
+    return liveState ? { ...match, liveState } : { ...match, liveState: null };
+  });
+}
+
 function mapFunResults(row) {
   if (!row) return { ...emptyFunResults };
   return {
@@ -732,6 +764,55 @@ function formatCountdown(kickoff, now = new Date()) {
   if (days > 0) return `${days}天${hours}小时`;
   if (hours > 0) return `${hours}小时${minutes}分钟`;
   return `${minutes}分钟`;
+}
+
+function getMatchDisplayScores(match) {
+  if (Number.isFinite(match?.liveState?.displayHomeScore) && Number.isFinite(match?.liveState?.displayAwayScore)) {
+    return {
+      home: match.liveState.displayHomeScore,
+      away: match.liveState.displayAwayScore,
+    };
+  }
+  if (Number.isFinite(match?.homeScore) && Number.isFinite(match?.awayScore)) {
+    return {
+      home: match.homeScore,
+      away: match.awayScore,
+    };
+  }
+  return { home: null, away: null };
+}
+
+function getLivePhaseLabel(match) {
+  const phase = match?.liveState?.matchPhase;
+  if (!phase) return null;
+  if (phase === "pre_match") return "即将开赛";
+  if (phase === "first_half" || phase === "second_half") return "比赛中";
+  if (phase === "half_time") return "中场";
+  if (phase === "full_time_break") return "常规时间结束";
+  if (phase === "extra_time") return "加时中";
+  if (phase === "penalties") return "点球中";
+  if (phase === "finished") return "已结束";
+  return "比赛中";
+}
+
+function getLivePhasePillClass(match) {
+  const phase = match?.liveState?.matchPhase;
+  if (phase === "finished") return "bg-emerald-500/15 text-emerald-200";
+  if (phase === "half_time" || phase === "full_time_break") return "bg-amber-500/15 text-amber-200";
+  if (phase === "extra_time" || phase === "penalties") return "bg-rose-500/15 text-rose-200";
+  if (phase === "first_half" || phase === "second_half") return "bg-cyan-500/15 text-cyan-200";
+  return "bg-slate-800 text-slate-300";
+}
+
+function hasLiveClock(match) {
+  return Boolean(match?.liveState?.matchClock && ["first_half", "second_half", "extra_time", "penalties"].includes(match?.liveState?.matchPhase));
+}
+
+function isRegulationSettledWhileLiveContinues(match) {
+  return Boolean(
+    match?.liveState?.regulationFinalAvailable &&
+    ["full_time_break", "extra_time", "penalties"].includes(match?.liveState?.matchPhase),
+  );
 }
 
 function getMostCommonPrediction(playerPredictions) {
@@ -1112,20 +1193,34 @@ function AuthScreen({ onSignedIn }) {
 }
 
 function MatchStatus({ match }) {
+  const liveLabel = getLivePhaseLabel(match);
+  if (liveLabel) return <Pill className={getLivePhasePillClass(match)}>{liveLabel}</Pill>;
   if (match.status === "settled") return <Pill className="bg-emerald-500/15 text-emerald-200">已结算</Pill>;
   if (isMatchLocked(match)) return <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill>;
   return <Pill className="bg-sky-500/15 text-sky-200">可竞猜</Pill>;
 }
 
 function MatchCountdown({ match, now }) {
+  if (hasLiveClock(match)) return <Pill className="bg-cyan-500/15 text-cyan-200">比赛中：{match.liveState.matchClock}</Pill>;
+  if (match?.liveState?.matchPhase === "half_time") return <Pill className="bg-amber-500/15 text-amber-200">中场</Pill>;
+  if (match?.liveState?.matchPhase === "full_time_break") return <Pill className="bg-amber-500/15 text-amber-200">常规时间已结束</Pill>;
+  if (match?.liveState?.matchPhase === "extra_time") return <Pill className="bg-rose-500/15 text-rose-200">加时赛进行中</Pill>;
+  if (match?.liveState?.matchPhase === "penalties") return <Pill className="bg-rose-500/15 text-rose-200">点球大战进行中</Pill>;
+  if (match?.liveState?.matchPhase === "finished") return <Pill className="bg-emerald-500/15 text-emerald-200">比赛已结束</Pill>;
   if (match.status === "settled") return <Pill className="bg-emerald-500/15 text-emerald-200">已结束</Pill>;
   if (isMatchLocked(match, now)) return <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill>;
   return <Pill className="bg-cyan-500/15 text-cyan-200">距离锁定：{formatCountdown(match.kickoff, now)}</Pill>;
 }
 
 function MatchScore({ match }) {
-  if (!Number.isFinite(match.homeScore) || !Number.isFinite(match.awayScore)) return <span className="text-slate-500">vs</span>;
-  return <span className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1 text-base font-black text-slate-100">{match.homeScore} : {match.awayScore}</span>;
+  const score = getMatchDisplayScores(match);
+  if (!Number.isFinite(score.home) || !Number.isFinite(score.away)) return <span className="text-slate-500">vs</span>;
+  return <span className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1 text-base font-black text-slate-100">{score.home} : {score.away}</span>;
+}
+
+function RegulationSettlementNotice({ match, className = "" }) {
+  if (!isRegulationSettledWhileLiveContinues(match)) return null;
+  return <div className={`rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 ${className}`}>竞猜已按常规时间结算，实时比分仅供观赛。</div>;
 }
 
 export default function WorldCupPredictionMVP() {
@@ -1147,6 +1242,7 @@ export default function WorldCupPredictionMVP() {
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("ALL");
+  const baseMatchesRef = useRef(getFallbackMatches());
 
   const currentTime = useCurrentTime();
   const fallbackPlayer = session?.user ? {
@@ -1211,6 +1307,7 @@ export default function WorldCupPredictionMVP() {
       predictionsResult,
       funPredictionsResult,
       matchOverridesResult,
+      liveMatchStatesResult,
       worldCupResultsResult,
       funResultsResult,
     ] = await Promise.all([
@@ -1218,6 +1315,7 @@ export default function WorldCupPredictionMVP() {
       supabase.from("predictions").select("*").order("submitted_at", { ascending: true }),
       supabase.from("fun_predictions").select("*"),
       supabase.from("match_overrides").select("*"),
+      supabase.from("live_match_states").select("*"),
       supabase.from("world_cup_results").select("*"),
       supabase.from("fun_results").select("*").eq("id", "main").maybeSingle(),
     ]);
@@ -1227,16 +1325,21 @@ export default function WorldCupPredictionMVP() {
       predictionsResult,
       funPredictionsResult,
       matchOverridesResult,
+      liveMatchStatesResult,
       worldCupResultsResult,
       funResultsResult,
     ].find((result) => result.error)?.error;
     if (firstError) throw firstError;
 
     const validMatchIds = new Set(baseMatches.map((match) => match.id));
+    const liveMatchStates = mapLiveMatchStates(liveMatchStatesResult.data || []);
+    const mergedMatches = mergeMatchOverrides(matchOverridesResult.data || [], baseMatches);
+    const hydratedMatches = attachLiveMatchStates(mergedMatches, liveMatchStates);
     setPlayers((profilesResult.data || []).map(mapProfile));
     setPredictions((predictionsResult.data || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
     setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
-    setMatches(mergeMatchOverrides(matchOverridesResult.data || [], baseMatches));
+    setCompleteSchedule(hydratedMatches);
+    setMatches(hydratedMatches);
     setWorldCupResults(mapWorldCupResults(worldCupResultsResult.data || []));
     setFunResults(mapFunResults(funResultsResult.data));
   }
@@ -1245,6 +1348,7 @@ export default function WorldCupPredictionMVP() {
     let cancelled = false;
     async function bootstrapData() {
       if (!session?.user) {
+        baseMatchesRef.current = getFallbackMatches();
         setPlayers([]);
         setPredictions([]);
         setFunPredictions({});
@@ -1271,6 +1375,7 @@ export default function WorldCupPredictionMVP() {
           setScheduleSource("fallback");
           setDataError(`${scheduleError.message || "官方赛程加载失败"}，已使用本地备用赛程。`);
         }
+        baseMatchesRef.current = baseMatches;
         setCompleteSchedule(baseSchedule);
         setMatches(baseMatches);
         setSelectedMatchId((prev) => (baseMatches.some((match) => match.id === prev) ? prev : baseMatches[0]?.id || ""));
@@ -1289,6 +1394,26 @@ export default function WorldCupPredictionMVP() {
     bootstrapData();
     return () => {
       cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  React.useEffect(() => {
+    if (!session?.user || !isSupabaseConfigured) return undefined;
+
+    let stopped = false;
+    const timer = window.setInterval(async () => {
+      try {
+        await loadSupabaseData(baseMatchesRef.current);
+      } catch (error) {
+        if (!stopped) {
+          setDataError((prev) => prev || error.message || "实时比分刷新失败");
+        }
+      }
+    }, 60000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
     };
   }, [session?.user?.id]);
 
@@ -1905,7 +2030,26 @@ function FullScheduleCalendar({ schedule, source }) {
 }
 
 function ScheduleLargeCard({ match }) {
-  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill><Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill><Pill className="bg-slate-800 text-slate-100">{formatBeijingTime(match.kickoff)} 北京时间</Pill></div><div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div><div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div><div className="text-xs text-slate-500">{match.city}</div></div>;
+  const now = useCurrentTime();
+  return (
+    <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
+        <Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill>
+        <Pill className="bg-slate-800 text-slate-100">{formatBeijingTime(match.kickoff)} 北京时间</Pill>
+        <MatchStatus match={match} />
+        <MatchCountdown match={match} now={now} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-lg font-black">
+        <TeamName name={match.home} logo={match.homeLogo} />
+        <MatchScore match={match} />
+        <TeamName name={match.away} logo={match.awayLogo} />
+      </div>
+      <RegulationSettlementNotice match={match} className="mt-3" />
+      <div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div>
+      <div className="text-xs text-slate-500">{match.city}</div>
+    </div>
+  );
 }
 
 function MatchPredictionDetail({ match, players, predictions, currentPlayerId, onSubmit, now = new Date(), onOpenPlayerProfile }) {
@@ -1951,6 +2095,7 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
   return (
     <div>
       <div className="rounded-2xl bg-slate-950 p-4"><div className="text-sm font-bold text-slate-300">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black text-slate-500">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><DarkButton disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 px-4 py-3 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</DarkButton>{locked && <div className="mt-3 text-center text-xs text-slate-500">比赛已锁定，不能再修改预测。</div>}</div>
+      <RegulationSettlementNotice match={match} className="mt-4" />
       <div className="mt-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-black">朋友预测</h3>
@@ -2533,7 +2678,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
         <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
             <h2 className="text-2xl font-black">比赛管理</h2>
-            <p className="mt-1 text-sm text-slate-400">官方 API 负责赛程和队伍信息；管理员只维护锁定状态和最终比分。结算一次会同步竞猜得分和世界杯积分榜数据。</p>
+            <p className="mt-1 text-sm text-slate-400">官方 API 负责赛程、实时比分与常规时间自动结算；管理员仍可手动维护锁定状态和比分，但在比赛活跃同步窗口内，官方实时源会覆盖人工结果。</p>
           </div>
           <div className="grid gap-2 text-sm sm:grid-cols-3">
             <Pill className="bg-slate-800 text-slate-300">总场次 {matches.length}</Pill>
