@@ -104,3 +104,11 @@
 [2m22:56:17[22m [36m[1m[vite][22m[39m server restarted.
 [2m22:56:17[22m [36m[1m[vite][22m[39m [32m.env.local changed, restarting server...[39m
 [2m22:56:17[22m [36m[1m[vite][22m[39m server restarted.
+[2m19:36:11[22m [36m[1m[vite][22m[39m [32m.env.local changed, restarting server...[39m
+[2m19:36:11[22m [36m[1m[vite][22m[39m server restarted.
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.13:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.188.1:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.200.1:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://221.231.130.70:[1m5173[22m/[39m
