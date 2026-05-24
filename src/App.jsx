@@ -1539,13 +1539,18 @@ export default function WorldCupPredictionMVP() {
     setFunResults(nextResults);
   }
 
-  async function updateAvatarEmoji(avatarEmoji) {
+  async function updateProfile(profile) {
     if (!currentPlayer) return false;
+    const cleanUsername = String(profile?.username || "").trim();
+    if (!cleanUsername) {
+      setDataError("请填写用户名");
+      return false;
+    }
     setDataError("");
     const { data, error } = await supabase
       .rpc("update_my_profile", {
-        p_username: currentPlayer.name,
-        p_avatar_emoji: avatarEmoji,
+        p_username: cleanUsername,
+        p_avatar_emoji: profile?.avatarEmoji || DEFAULT_AVATAR_EMOJI,
       });
     if (error) {
       setDataError(error.message);
@@ -1606,7 +1611,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} onUpdateAvatar={updateAvatarEmoji} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
@@ -2095,11 +2100,12 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, onUpdateAvatar, onBack, onOpenAchievements, onOpenFullHistory }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
+  const [draftUsername, setDraftUsername] = useState(player.name || "");
   const [draftAvatarEmoji, setDraftAvatarEmoji] = useState(player.avatarEmoji || DEFAULT_AVATAR_EMOJI);
   const [savingAvatar, setSavingAvatar] = useState(false);
   const playerPredictions = predictions.filter((prediction) => prediction.playerId === player.id);
@@ -2124,15 +2130,22 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
     return { prediction, match, points: calculatePoints(prediction, match) };
   }).filter((item) => item.match).sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());
   const recentHistory = history.slice(0, 5);
+  const cleanDraftUsername = draftUsername.trim();
+  const profileChanged = cleanDraftUsername !== (player.name || "").trim() || draftAvatarEmoji !== (player.avatarEmoji || DEFAULT_AVATAR_EMOJI);
 
   React.useEffect(() => {
+    setDraftUsername(player.name || "");
     setDraftAvatarEmoji(player.avatarEmoji || DEFAULT_AVATAR_EMOJI);
     setAvatarEditorOpen(false);
-  }, [player.id, player.avatarEmoji]);
+  }, [player.id, player.name, player.avatarEmoji]);
 
-  async function saveAvatarEmoji() {
+  async function saveProfile() {
+    if (!cleanDraftUsername) return;
     setSavingAvatar(true);
-    const ok = await onUpdateAvatar?.(draftAvatarEmoji);
+    const ok = await onUpdateProfile?.({
+      username: cleanDraftUsername,
+      avatarEmoji: draftAvatarEmoji,
+    });
     setSavingAvatar(false);
     if (ok) setAvatarEditorOpen(false);
   }
@@ -2154,7 +2167,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
             <div>
               <h2 className="text-3xl font-black">{player.name} 的个人主页</h2>
               <p className="mt-1 text-sm text-slate-400">查看个人竞猜表现、称号和历史记录。</p>
-              {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以修改你的 emoji 头像。</p>}
+              {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以编辑你的昵称和 emoji 头像。</p>}
             </div>
           </div>
           <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回竞猜排行榜</DarkButton>
@@ -2163,15 +2176,24 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
           <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <h3 className="font-black">选择 emoji 头像</h3>
-                <p className="text-xs text-slate-500">选择后点击保存，排行榜和朋友预测里会同步更新。</p>
+                <h3 className="font-black">编辑个人资料</h3>
+                <p className="text-xs text-slate-500">修改昵称或头像后点击保存，排行榜和朋友预测里会同步更新。</p>
               </div>
               <Pill className="bg-slate-800 text-slate-300">{draftAvatarEmoji}</Pill>
             </div>
+            <label className="mb-4 block">
+              <span className="mb-2 block text-sm font-bold text-slate-300">个人昵称</span>
+              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3">
+                <User className="h-4 w-4 text-slate-500" />
+                <input value={draftUsername} onChange={(event) => setDraftUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="例如 Oscar" />
+              </div>
+              {!cleanDraftUsername && <div className="mt-2 text-xs text-rose-300">昵称不能为空。</div>}
+            </label>
+            <div className="mb-2 text-sm font-bold text-slate-300">选择 emoji 头像</div>
             <EmojiPicker value={draftAvatarEmoji} onChange={setDraftAvatarEmoji} disabled={savingAvatar} />
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <button disabled={savingAvatar || draftAvatarEmoji === (player.avatarEmoji || DEFAULT_AVATAR_EMOJI)} onClick={saveAvatarEmoji} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">{savingAvatar ? "保存中..." : "保存头像"}</button>
-              <DarkButton disabled={savingAvatar} onClick={() => { setDraftAvatarEmoji(player.avatarEmoji || DEFAULT_AVATAR_EMOJI); setAvatarEditorOpen(false); }} className="px-4 py-2 text-sm font-black">取消</DarkButton>
+              <button disabled={savingAvatar || !cleanDraftUsername || !profileChanged} onClick={saveProfile} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">{savingAvatar ? "保存中..." : "保存资料"}</button>
+              <DarkButton disabled={savingAvatar} onClick={() => { setDraftUsername(player.name || ""); setDraftAvatarEmoji(player.avatarEmoji || DEFAULT_AVATAR_EMOJI); setAvatarEditorOpen(false); }} className="px-4 py-2 text-sm font-black">取消</DarkButton>
             </div>
           </div>
         )}
