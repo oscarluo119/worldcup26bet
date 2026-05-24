@@ -3,12 +3,16 @@ create table if not exists public.profiles (
   email text not null,
   username text not null,
   avatar_emoji text not null default '⚽',
+  camp_id text check (camp_id in ('A', 'B')),
   is_admin boolean not null default false,
   joined_at timestamptz not null default now()
 );
 
 alter table public.profiles
 add column if not exists avatar_emoji text not null default '⚽';
+
+alter table public.profiles
+add column if not exists camp_id text check (camp_id in ('A', 'B'));
 
 create table if not exists public.predictions (
   id uuid primary key default gen_random_uuid(),
@@ -262,6 +266,41 @@ end;
 $$;
 
 grant execute on function public.update_my_profile(text, text) to authenticated;
+
+create or replace function public.admin_set_user_camp(
+  p_user_id uuid,
+  p_camp_id text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_profile public.profiles;
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  if p_camp_id is not null and p_camp_id not in ('A', 'B') then
+    raise exception 'Invalid camp_id: %', p_camp_id;
+  end if;
+
+  update public.profiles
+  set camp_id = p_camp_id
+  where id = p_user_id
+  returning * into updated_profile;
+
+  if updated_profile.id is null then
+    raise exception 'Profile not found';
+  end if;
+
+  return updated_profile;
+end;
+$$;
+
+grant execute on function public.admin_set_user_camp(uuid, text) to authenticated;
 
 drop policy if exists "predictions readable by signed in users" on public.predictions;
 create policy "predictions readable by signed in users"

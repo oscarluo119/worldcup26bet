@@ -252,6 +252,28 @@ const WORLD_CUP_GOAL_REFERENCES = [
 const emptyFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
 const DEFAULT_AVATAR_EMOJI = "⚽";
 const AVATAR_EMOJIS = ["⚽", "🏆", "🥅", "🔥", "⭐", "👑", "💪", "🎯", "🚀", "🦁", "🐯", "🐼", "🦊", "🐲", "😎"];
+const CAMP_CONFIG = {
+  A: {
+    id: "A",
+    shortLabel: "A阵营",
+    name: "红方",
+    accent: "text-rose-100",
+    pill: "bg-rose-500/15 text-rose-200",
+    card: "border-rose-400/25 bg-rose-500/10",
+    panel: "from-rose-500/18 via-rose-500/8 to-transparent",
+    glow: "shadow-[0_18px_50px_rgba(244,63,94,0.12)]",
+  },
+  B: {
+    id: "B",
+    shortLabel: "B阵营",
+    name: "蓝方",
+    accent: "text-sky-100",
+    pill: "bg-sky-500/15 text-sky-200",
+    card: "border-sky-400/25 bg-sky-500/10",
+    panel: "from-sky-500/18 via-sky-500/8 to-transparent",
+    glow: "shadow-[0_18px_50px_rgba(14,165,233,0.12)]",
+  },
+};
 const WORLDCUP_API_KEY = import.meta.env.VITE_WORLDCUP_API_KEY;
 const WORLDCUP_FIXTURES_URL = "https://api.worldcupapi.com/fixtures";
 
@@ -551,6 +573,7 @@ function mapProfile(row) {
     name: row.username || row.email || "未命名用户",
     email: row.email || "",
     avatarEmoji: row.avatar_emoji || DEFAULT_AVATAR_EMOJI,
+    campId: row.camp_id || null,
     isAdmin: Boolean(row.is_admin),
     joinedAt: row.joined_at || new Date().toISOString(),
   };
@@ -652,6 +675,7 @@ const tabs = [
   { id: "completeSchedule", label: "完整赛程", icon: CalendarDays },
   { id: "worldCupStandings", label: "世界杯排名", icon: Medal },
   { id: "ranking", label: "竞猜排行榜", icon: Trophy },
+  { id: "campBattle", label: "阵营对抗赛", icon: Users },
   { id: "fun", label: "趣味预测", icon: Flame },
   { id: "achievements", label: "成就墙", icon: Crown },
   { id: "rules", label: "规则", icon: ShieldCheck },
@@ -739,6 +763,144 @@ function formatBeijingDateKey(value) {
 function formatBeijingTime(value) {
   const parts = getBeijingDateParts(value);
   return `${parts.hour}:${parts.minute}`;
+}
+
+function getCampMeta(campId) {
+  return CAMP_CONFIG[campId] || null;
+}
+
+function getCampDisplayName(campId) {
+  const meta = getCampMeta(campId);
+  return meta ? `${meta.shortLabel} · ${meta.name}` : "未分组";
+}
+
+function comparePlayers(left, right) {
+  return right.total - left.total
+    || right.exactCount - left.exactCount
+    || right.outcomeCount - left.outcomeCount
+    || right.played - left.played
+    || new Date(left.joinedAt).getTime() - new Date(right.joinedAt).getTime();
+}
+
+function pickCampWinner(leftValue, rightValue, reverse = false) {
+  if (leftValue === rightValue) return null;
+  if (reverse) return leftValue < rightValue ? "A" : "B";
+  return leftValue > rightValue ? "A" : "B";
+}
+
+function formatCampDiff(value) {
+  return Number.isFinite(value) ? Math.abs(value).toFixed(1).replace(/\.0$/, "") : "0";
+}
+
+function buildCampBattleSummary(rankings, matches, predictions) {
+  const campIds = ["A", "B"];
+  const rankingMap = Object.fromEntries(rankings.map((player) => [player.id, player]));
+  const grouped = Object.fromEntries(campIds.map((campId) => [campId, rankings.filter((player) => player.campId === campId).sort(comparePlayers)]));
+  const camps = Object.fromEntries(campIds.map((campId) => {
+    const members = grouped[campId];
+    const total = members.reduce((sum, player) => sum + player.total, 0);
+    const exactTotal = members.reduce((sum, player) => sum + player.exactCount, 0);
+    const outcomeTotal = members.reduce((sum, player) => sum + player.outcomeCount, 0);
+    const playedTotal = members.reduce((sum, player) => sum + player.played, 0);
+    const memberCount = members.length;
+    return [campId, {
+      campId,
+      meta: getCampMeta(campId),
+      members,
+      memberCount,
+      total,
+      average: memberCount ? total / memberCount : 0,
+      exactTotal,
+      outcomeTotal,
+      playedTotal,
+      playedAverage: memberCount ? playedTotal / memberCount : 0,
+      highest: members[0]?.total ?? null,
+      lowest: members.at(-1)?.total ?? null,
+      topPlayer: members[0] || null,
+      bottomPlayer: members.at(-1) || null,
+    }];
+  }));
+
+  const settledMatches = matches.filter(isSettledMatch).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
+  const predictionsByMatchId = predictions.reduce((acc, prediction) => {
+    if (!acc[prediction.matchId]) acc[prediction.matchId] = [];
+    acc[prediction.matchId].push(prediction);
+    return acc;
+  }, {});
+
+  const recentMatchBattles = settledMatches.slice(-3).reverse().map((match) => {
+    const matchPredictions = predictionsByMatchId[match.id] || [];
+    const perCamp = { A: 0, B: 0 };
+    let mvp = null;
+    matchPredictions.forEach((prediction) => {
+      const player = rankingMap[prediction.playerId];
+      if (!player?.campId || !(player.campId in perCamp)) return;
+      const points = calculatePoints(prediction, match);
+      perCamp[player.campId] += points;
+      if (!mvp || points > mvp.points || (points === mvp.points && comparePlayers(player, mvp.player) < 0)) {
+        mvp = { player, points };
+      }
+    });
+    return {
+      key: `match-${match.id}`,
+      label: `第${match.no}场`,
+      sublabel: `${teamName(match.home)} ${match.homeScore}:${match.awayScore} ${teamName(match.away)}`,
+      leftValue: perCamp.A,
+      rightValue: perCamp.B,
+      winner: pickCampWinner(perCamp.A, perCamp.B),
+      mvp,
+      dateKey: formatBeijingDateKey(match.kickoff),
+    };
+  });
+
+  const settledDateKeys = [...new Set(settledMatches.map((match) => formatBeijingDateKey(match.kickoff)))];
+  const recentDayBattles = settledDateKeys.slice(-3).reverse().map((dateKey) => {
+    const matchesOnDate = settledMatches.filter((match) => formatBeijingDateKey(match.kickoff) === dateKey);
+    const perCamp = { A: 0, B: 0 };
+    matchesOnDate.forEach((match) => {
+      const matchPredictions = predictionsByMatchId[match.id] || [];
+      matchPredictions.forEach((prediction) => {
+        const player = rankingMap[prediction.playerId];
+        if (!player?.campId || !(player.campId in perCamp)) return;
+        perCamp[player.campId] += calculatePoints(prediction, match);
+      });
+    });
+    return {
+      key: `day-${dateKey}`,
+      label: dateKey,
+      sublabel: `${matchesOnDate.length} 场已结算`,
+      leftValue: perCamp.A,
+      rightValue: perCamp.B,
+      winner: pickCampWinner(perCamp.A, perCamp.B),
+    };
+  });
+
+  const metricDuels = [
+    { id: "average", title: "平均分胜利", description: "人数不均衡时最公平的主指标。", leftValue: camps.A.average, rightValue: camps.B.average, winner: pickCampWinner(camps.A.average, camps.B.average), formatter: (value) => `${value.toFixed(1).replace(/\.0$/, "")}分` },
+    { id: "highest", title: "王牌对决", description: "比较双方阵营头号选手。", leftValue: camps.A.highest ?? 0, rightValue: camps.B.highest ?? 0, winner: pickCampWinner(camps.A.highest ?? -1, camps.B.highest ?? -1), formatter: (value) => `${value}分` },
+    { id: "lowest", title: "深度对决", description: "谁的阵营下限更稳。", leftValue: camps.A.lowest ?? 0, rightValue: camps.B.lowest ?? 0, winner: pickCampWinner(camps.A.lowest ?? -1, camps.B.lowest ?? -1), formatter: (value) => `${value}分` },
+    { id: "exact", title: "精准火力", description: "完全命中比分总次数。", leftValue: camps.A.exactTotal, rightValue: camps.B.exactTotal, winner: pickCampWinner(camps.A.exactTotal, camps.B.exactTotal), formatter: (value) => `${value}次` },
+    { id: "outcome", title: "稳定军团", description: "命中胜平负总次数。", leftValue: camps.A.outcomeTotal, rightValue: camps.B.outcomeTotal, winner: pickCampWinner(camps.A.outcomeTotal, camps.B.outcomeTotal), formatter: (value) => `${value}次` },
+    { id: "playedAverage", title: "出勤之王", description: "比较阵营人均参与场次。", leftValue: camps.A.playedAverage, rightValue: camps.B.playedAverage, winner: pickCampWinner(camps.A.playedAverage, camps.B.playedAverage), formatter: (value) => `${value.toFixed(1).replace(/\.0$/, "")}场` },
+  ];
+
+  const leaderCampId = pickCampWinner(camps.A.average, camps.B.average)
+    || pickCampWinner(camps.A.total, camps.B.total)
+    || pickCampWinner(camps.A.exactTotal, camps.B.exactTotal)
+    || pickCampWinner(camps.A.outcomeTotal, camps.B.outcomeTotal);
+
+  return {
+    camps,
+    leaderCampId,
+    availableCampCount: campIds.filter((campId) => camps[campId].memberCount > 0).length,
+    averageGap: Math.abs(camps.A.average - camps.B.average),
+    metricDuels,
+    recentMatchBattles,
+    recentDayBattles,
+    latestMatchBattle: recentMatchBattles[0] || null,
+    latestDayBattle: recentDayBattles[0] || null,
+    lowestAverageCampId: pickCampWinner(camps.A.average, camps.B.average, true),
+  };
 }
 
 function formatBeijingDateTitle(value) {
@@ -1250,6 +1412,7 @@ export default function WorldCupPredictionMVP() {
     name: getDisplayName(session.user),
     email: session.user.email || "",
     avatarEmoji: session.user.user_metadata?.avatar_emoji || DEFAULT_AVATAR_EMOJI,
+    campId: null,
     isAdmin: false,
     joinedAt: session.user.created_at || new Date().toISOString(),
   } : null;
@@ -1522,6 +1685,7 @@ export default function WorldCupPredictionMVP() {
   const settledCount = matches.filter(isSettledMatch).length;
   const worldCupStandings = useMemo(() => buildWorldCupStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
+  const campBattleSummary = useMemo(() => buildCampBattleSummary(rankings, matches, predictions), [rankings, matches, predictions]);
 
   React.useEffect(() => {
     setSelectedMatchId((prev) => {
@@ -1686,6 +1850,22 @@ export default function WorldCupPredictionMVP() {
     return true;
   }
 
+  async function setUserCamp(userId, campId) {
+    if (!isAdmin || !userId) return false;
+    const { error } = await supabase.rpc("admin_set_user_camp", {
+      p_user_id: userId,
+      p_camp_id: campId || null,
+    });
+    if (error) {
+      setDataError(error.message);
+      return false;
+    }
+    setPlayers((prev) => prev.map((player) => (
+      player.id === userId ? { ...player, campId: campId || null } : player
+    )));
+    return true;
+  }
+
   function openPlayerProfile(playerId) {
     setSelectedProfilePlayerId(playerId);
     setActiveTab("playerProfile");
@@ -1736,12 +1916,13 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} />}
+          {activeTab === "campBattle" && <CampBattlePanel campBattleSummary={campBattleSummary} settledCount={settledCount} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -2245,7 +2426,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, campBattleSummary, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
@@ -2277,6 +2458,10 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   const recentHistory = history.slice(0, 5);
   const cleanDraftUsername = draftUsername.trim();
   const profileChanged = cleanDraftUsername !== (player.name || "").trim() || draftAvatarEmoji !== (player.avatarEmoji || DEFAULT_AVATAR_EMOJI);
+  const playerCamp = getCampMeta(player.campId);
+  const campStats = player.campId ? campBattleSummary?.camps?.[player.campId] : null;
+  const campRank = campStats?.members?.findIndex((member) => member.id === player.id) ?? -1;
+  const exactCampRank = campStats?.members ? [...campStats.members].sort((a, b) => b.exactCount - a.exactCount || comparePlayers(a, b)).findIndex((member) => member.id === player.id) : -1;
 
   React.useEffect(() => {
     setDraftUsername(player.name || "");
@@ -2350,6 +2535,37 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         <StatCard icon={CheckCircle2} label="命中胜平负" value={`${ranking.outcomeCount || 0}次`} sub="包含完全比分" />
         <StatCard icon={Flame} label="最高连胜" value={`${maxStreak}场`} sub="连续命中胜平负" />
       </div>
+
+      <Card className={playerCamp ? `${playerCamp.card} ${playerCamp.glow}` : ""}>
+        <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+          <div>
+            <h3 className="text-xl font-black">阵营贡献</h3>
+            <p className="text-sm text-slate-400">阵营赛独立统计，不会影响个人主榜积分。</p>
+          </div>
+          <Pill className={playerCamp ? playerCamp.pill : "bg-slate-800 text-slate-300"}>{getCampDisplayName(player.campId)}</Pill>
+        </div>
+        {playerCamp && campStats ? (
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl bg-slate-950/70 p-4">
+              <div className="text-sm text-slate-400">阵营内总分排名</div>
+              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{campRank + 1}</div>
+              <div className="mt-1 text-xs text-slate-500">共 {campStats.memberCount} 人</div>
+            </div>
+            <div className="rounded-2xl bg-slate-950/70 p-4">
+              <div className="text-sm text-slate-400">阵营内完全比分排名</div>
+              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{exactCampRank + 1}</div>
+              <div className="mt-1 text-xs text-slate-500">命中 {ranking.exactCount || 0} 次</div>
+            </div>
+            <div className="rounded-2xl bg-slate-950/70 p-4">
+              <div className="text-sm text-slate-400">对阵营贡献</div>
+              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>{ranking.total || 0}分</div>
+              <div className="mt-1 text-xs text-slate-500">占阵营总分 {campStats.total ? `${Math.round(((ranking.total || 0) / campStats.total) * 100)}%` : "0%"}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">管理员还没有把这位玩家分配到阵营。</div>
+        )}
+      </Card>
 
       <div className="grid gap-5 lg:grid-cols-3">
         <Card>
@@ -2658,7 +2874,263 @@ function RankTrendChart({ players, rankingTrend }) {
   return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="text-sm text-slate-400">每结算一场比赛后自动刷新。纵轴显示玩家累计积分。</p></div><Pill className="bg-slate-800 text-slate-100">实时更新</Pill></div><div className="h-80 rounded-2xl border border-slate-700 bg-slate-950 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(15,23,42,0.96)", border: "1px solid rgba(148,163,184,0.35)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={player.name} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults }) {
+function CampBadge({ campId, className = "" }) {
+  const meta = getCampMeta(campId);
+  return <Pill className={`${meta ? meta.pill : "bg-slate-800 text-slate-300"} ${className}`}>{getCampDisplayName(campId)}</Pill>;
+}
+
+function CampBattlePanel({ campBattleSummary, settledCount }) {
+  const leftCamp = campBattleSummary.camps.A;
+  const rightCamp = campBattleSummary.camps.B;
+  const leaderMeta = getCampMeta(campBattleSummary.leaderCampId);
+
+  return (
+    <section className="mt-6 space-y-5">
+      <Card>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-3xl font-black">阵营对抗赛</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">阵营赛独立于个人主榜，重点比较平均分、整体火力和阵容深度，适合 18 vs 12 这种不均衡人数的团体对抗。</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Pill className="bg-slate-800 text-slate-300">已结算 {settledCount} 场</Pill>
+            <Pill className={leaderMeta ? leaderMeta.pill : "bg-slate-800 text-slate-300"}>{leaderMeta ? `${leaderMeta.name} 暂时领先` : "暂未分出领先方"}</Pill>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
+        <Card className={`bg-gradient-to-br ${leftCamp.meta.panel} ${leftCamp.meta.glow}`}>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-black">{leftCamp.meta.name}</h3>
+              <p className="text-sm text-slate-400">{leftCamp.memberCount} 人参战</p>
+            </div>
+            <CampBadge campId="A" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatTile label="阵营总分" value={`${leftCamp.total}分`} />
+            <StatTile label="阵营平均分" value={`${leftCamp.average.toFixed(1).replace(/\.0$/, "")}分`} />
+            <StatTile label="人均参与" value={`${leftCamp.playedAverage.toFixed(1).replace(/\.0$/, "")}场`} />
+          </div>
+        </Card>
+        <Card className={`bg-gradient-to-br ${rightCamp.meta.panel} ${rightCamp.meta.glow}`}>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-black">{rightCamp.meta.name}</h3>
+              <p className="text-sm text-slate-400">{rightCamp.memberCount} 人参战</p>
+            </div>
+            <CampBadge campId="B" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatTile label="阵营总分" value={`${rightCamp.total}分`} />
+            <StatTile label="阵营平均分" value={`${rightCamp.average.toFixed(1).replace(/\.0$/, "")}分`} />
+            <StatTile label="人均参与" value={`${rightCamp.playedAverage.toFixed(1).replace(/\.0$/, "")}场`} />
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h3 className="text-2xl font-black">核心对抗记分板</h3>
+            <p className="text-sm text-slate-400">先看平均分，再看总分与命中能力。平均分差目前为 {formatCampDiff(campBattleSummary.averageGap)} 分。</p>
+          </div>
+          <Pill className="bg-slate-800 text-slate-300">6 项对抗</Pill>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {campBattleSummary.metricDuels.map((duel) => <CampDuelCard key={duel.id} duel={duel} />)}
+        </div>
+      </Card>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <CampMembersCard camp={leftCamp} />
+        <CampMembersCard camp={rightCamp} />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-black">趣味荣誉区</h3>
+              <p className="text-sm text-slate-400">只做展示，不影响任何个人积分。</p>
+            </div>
+            <Pill className="bg-slate-800 text-slate-300">荣誉玩法</Pill>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <HonorCard title="头号选手" value={leftCamp.topPlayer ? `${leftCamp.topPlayer.name} / ${leftCamp.topPlayer.total}分` : "待组队"} badge={leftCamp.meta.name} badgeClass={leftCamp.meta.pill} />
+            <HonorCard title="头号选手" value={rightCamp.topPlayer ? `${rightCamp.topPlayer.name} / ${rightCamp.topPlayer.total}分` : "待组队"} badge={rightCamp.meta.name} badgeClass={rightCamp.meta.pill} />
+            <HonorCard title="拖分王" value={leftCamp.bottomPlayer ? `${leftCamp.bottomPlayer.name} / ${leftCamp.bottomPlayer.total}分` : "待组队"} badge={leftCamp.meta.name} badgeClass={leftCamp.meta.pill} />
+            <HonorCard title="拖分王" value={rightCamp.bottomPlayer ? `${rightCamp.bottomPlayer.name} / ${rightCamp.bottomPlayer.total}分` : "待组队"} badge={rightCamp.meta.name} badgeClass={rightCamp.meta.pill} />
+            <HonorCard title="MVP归属" value={campBattleSummary.latestMatchBattle?.mvp ? `${campBattleSummary.latestMatchBattle.mvp.player.name} · ${campBattleSummary.latestMatchBattle.mvp.points}分` : "最近暂无单场MVP"} badge={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.name : "等待结算"} badgeClass={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.pill : "bg-slate-800 text-slate-300"} />
+            <HonorCard title="毒奶阵营" value={campBattleSummary.lowestAverageCampId ? `${getCampMeta(campBattleSummary.lowestAverageCampId)?.name} 当前平均分更低` : "双方暂时打平"} badge="轻松调侃" badgeClass="bg-fuchsia-500/15 text-fuchsia-200" />
+          </div>
+        </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-black">最近战况</h3>
+              <p className="text-sm text-slate-400">分别看最近 3 场与最近 3 个比赛日的阵营战报。</p>
+            </div>
+            <Pill className="bg-slate-800 text-slate-300">即时刷新</Pill>
+          </div>
+          <div className="space-y-4">
+            <BattleFeed title="最近 3 场" battles={campBattleSummary.recentMatchBattles} />
+            <BattleFeed title="最近 3 个比赛日" battles={campBattleSummary.recentDayBattles} />
+          </div>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function StatTile({ label, value }) {
+  return <div className="rounded-2xl bg-slate-950/70 p-4"><div className="text-sm text-slate-400">{label}</div><div className="mt-2 text-2xl font-black">{value}</div></div>;
+}
+
+function CampDuelCard({ duel }) {
+  const winnerMeta = getCampMeta(duel.winner);
+  return (
+    <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h4 className="font-black">{duel.title}</h4>
+          <p className="text-xs text-slate-500">{duel.description}</p>
+        </div>
+        <Pill className={winnerMeta ? winnerMeta.pill : "bg-slate-800 text-slate-300"}>{winnerMeta ? `${winnerMeta.name} 领先` : "双方打平"}</Pill>
+      </div>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <div className="rounded-2xl bg-slate-900 px-4 py-4 text-center">
+          <div className="text-xs text-slate-500">{CAMP_CONFIG.A.name}</div>
+          <div className="mt-2 text-2xl font-black text-rose-100">{duel.formatter(duel.leftValue)}</div>
+        </div>
+        <div className="text-sm font-bold text-slate-500">VS</div>
+        <div className="rounded-2xl bg-slate-900 px-4 py-4 text-center">
+          <div className="text-xs text-slate-500">{CAMP_CONFIG.B.name}</div>
+          <div className="mt-2 text-2xl font-black text-sky-100">{duel.formatter(duel.rightValue)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CampMembersCard({ camp }) {
+  return (
+    <Card className={`${camp.meta.card} ${camp.meta.glow}`}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-2xl font-black">{camp.meta.name} 成员榜</h3>
+          <p className="text-sm text-slate-400">按当前个人积分降序排序。</p>
+        </div>
+        <CampBadge campId={camp.campId} />
+      </div>
+      {camp.members.length ? (
+        <div className="space-y-3">
+          {camp.members.map((member, index) => (
+            <div key={member.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl bg-slate-950/75 px-3 py-3">
+              <span className="rounded-xl bg-slate-900 px-2 py-1 text-xs font-bold text-slate-300">#{index + 1}</span>
+              <div className="min-w-0">
+                <UserNameOnly player={member} className="text-sm" />
+                <div className="text-xs text-slate-500">完全比分 {member.exactCount} 次 · 命中结果 {member.outcomeCount} 次</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xl font-black">{member.total}</div>
+                <div className="text-xs text-slate-500">{member.played} 场</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">这个阵营暂时还没有成员。</div>
+      )}
+    </Card>
+  );
+}
+
+function HonorCard({ title, value, badge, badgeClass }) {
+  return <div className="rounded-2xl bg-slate-950/70 p-4"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{title}</div><Pill className={badgeClass}>{badge}</Pill></div><div className="text-sm leading-6 text-slate-300">{value}</div></div>;
+}
+
+function BattleFeed({ title, battles }) {
+  return (
+    <div>
+      <div className="mb-3 text-sm font-bold text-slate-300">{title}</div>
+      <div className="space-y-2">
+        {battles.length ? battles.map((battle) => {
+          const winnerMeta = getCampMeta(battle.winner);
+          return (
+            <div key={battle.key} className="rounded-2xl bg-slate-950/70 px-4 py-3">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <div className="font-black">{battle.label}</div>
+                <Pill className={winnerMeta ? winnerMeta.pill : "bg-slate-800 text-slate-300"}>{winnerMeta ? `${winnerMeta.name} 胜` : "双方战平"}</Pill>
+              </div>
+              <div className="text-sm text-slate-400">{battle.sublabel}</div>
+              <div className="mt-2 text-sm text-slate-300">{CAMP_CONFIG.A.name} {battle.leftValue} : {battle.rightValue} {CAMP_CONFIG.B.name}</div>
+            </div>
+          );
+        }) : <div className="rounded-2xl bg-slate-950 p-4 text-center text-sm text-slate-500">暂无可展示的战报。</div>}
+      </div>
+    </div>
+  );
+}
+
+function AdminCampAssignmentCard({ players, onSetUserCamp }) {
+  const [query, setQuery] = useState("");
+  const [savingUserId, setSavingUserId] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visiblePlayers = players.filter((player) => {
+    const text = `${player.name}${player.email}${getCampDisplayName(player.campId)}`.toLowerCase();
+    return !normalizedQuery || text.includes(normalizedQuery);
+  });
+
+  async function handleChange(userId, campId) {
+    setSavingUserId(userId);
+    await onSetUserCamp?.(userId, campId || null);
+    setSavingUserId("");
+  }
+
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-black">阵营分配</h2>
+          <p className="mt-1 text-sm text-slate-400">管理员手动把玩家分到红方、蓝方或暂不分组，阵营赛会自动独立统计。</p>
+        </div>
+        <Pill className="bg-slate-800 text-slate-300">当前 {players.length} 名玩家</Pill>
+      </div>
+      <div className="relative mb-4 max-w-sm">
+        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索玩家 / 邮箱 / 阵营" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500" />
+      </div>
+      <div className="space-y-3">
+        {visiblePlayers.length ? visiblePlayers.map((player) => (
+          <div key={player.id} className="flex flex-col gap-3 rounded-2xl border border-slate-700 bg-slate-950/70 p-4 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3">
+                <UserBadge player={player} />
+                <div className="min-w-0">
+                  <UserNameOnly player={player} className="text-sm" />
+                  <div className="truncate text-xs text-slate-500">{player.email}</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CampBadge campId={player.campId} />
+              <select value={player.campId || ""} disabled={savingUserId === player.id} onChange={(event) => handleChange(player.id, event.target.value)} className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none disabled:opacity-50">
+                <option value="">未分组</option>
+                <option value="A">A阵营 / 红方</option>
+                <option value="B">B阵营 / 蓝方</option>
+              </select>
+            </div>
+          </div>
+        )) : <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">没有符合条件的玩家。</div>}
+      </div>
+    </Card>
+  );
+}
+
+function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
   const normalizedQuery = adminQuery.trim().toLowerCase();
@@ -2673,6 +3145,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
 
   return (
     <section className="mt-6 space-y-5">
+      <AdminCampAssignmentCard players={players} onSetUserCamp={onSetUserCamp} />
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
       <Card>
         <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
