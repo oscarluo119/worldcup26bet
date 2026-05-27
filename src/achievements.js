@@ -138,16 +138,19 @@ function getBinaryProgress(condition, achievedAt = null) {
 }
 
 function buildRankingSnapshots(players, predictions, settledMatches) {
+  const settledMatchesById = Object.fromEntries(settledMatches.map((match) => [match.id, match]));
   return settledMatches.map((currentMatch, index) => {
     const includedMatchIds = new Set(settledMatches.slice(0, index + 1).map((match) => match.id));
     const snapshot = players.map((player) => {
       const playerPredictions = predictions.filter((prediction) => prediction.playerId === player.id && includedMatchIds.has(prediction.matchId));
-      const total = playerPredictions.reduce((sum, prediction) => sum + calculatePoints(prediction, settledMatches.find((match) => match.id === prediction.matchId)), 0);
-      const exactCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, settledMatches.find((match) => match.id === prediction.matchId)) === 4).length;
+      const total = playerPredictions.reduce((sum, prediction) => sum + calculatePoints(prediction, settledMatchesById[prediction.matchId]), 0);
+      const exactCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, settledMatchesById[prediction.matchId]) === 4).length;
+      const netGoalOnlyCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, settledMatchesById[prediction.matchId]) === 2).length;
+      const outcomeOnlyCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, settledMatchesById[prediction.matchId]) === 1).length;
       const outcomeCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, settledMatches.find((match) => match.id === prediction.matchId)) > 0).length;
       const pointsThisMatch = calculatePoints(predictions.find((prediction) => prediction.playerId === player.id && prediction.matchId === currentMatch.id), currentMatch);
-      return { ...player, total, exactCount, outcomeCount, played: playerPredictions.length, pointsThisMatch };
-    }).sort((a, b) => b.total - a.total || b.exactCount - a.exactCount || b.outcomeCount - a.outcomeCount || b.played - a.played || new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
+      return { ...player, total, exactCount, netGoalOnlyCount, outcomeOnlyCount, outcomeCount, played: playerPredictions.length, pointsThisMatch };
+    }).sort((a, b) => b.total - a.total || b.exactCount - a.exactCount || b.netGoalOnlyCount - a.netGoalOnlyCount || b.outcomeOnlyCount - a.outcomeOnlyCount || b.played - a.played || new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
 
     const maxPoints = Math.max(...snapshot.map((item) => item.pointsThisMatch), 0);
     const topPlayers = maxPoints > 0 ? snapshot.filter((item) => item.pointsThisMatch === maxPoints) : [];
@@ -604,50 +607,50 @@ export function getAchievementTheme(item) {
   const hiddenUnlocked = item?.achievement?.hidden && achieved;
   if (hiddenUnlocked) {
     return {
-      card: "border-cyan-300/40 bg-[linear-gradient(135deg,rgba(207,250,254,0.16),rgba(56,189,248,0.08),rgba(244,244,245,0.1))] shadow-[0_0_35px_rgba(125,211,252,0.15)]",
-      title: "bg-gradient-to-r from-cyan-100 via-sky-200 to-slate-50 bg-clip-text text-transparent",
-      badge: "border border-cyan-200/40 bg-cyan-100/10 text-cyan-100",
-      accent: "text-cyan-100",
+      card: "border-emerald-300/35 bg-[linear-gradient(135deg,rgba(6,78,59,0.82),rgba(20,83,45,0.7),rgba(6,95,70,0.36))] shadow-[0_0_35px_rgba(16,185,129,0.14)]",
+      title: "bg-gradient-to-r from-emerald-100 via-teal-100 to-lime-50 bg-clip-text text-transparent",
+      badge: "border border-emerald-200/35 bg-emerald-100/10 text-emerald-100",
+      accent: "text-emerald-100",
     };
   }
 
   if (!achieved) {
     return {
       card: item?.achievement?.hidden
-        ? "border-slate-700/80 bg-slate-950/85"
-        : "border-slate-800 bg-slate-950/70",
-      title: "text-slate-200",
-      badge: "border border-slate-700 bg-slate-900 text-slate-300",
-      accent: "text-slate-300",
+        ? "border-emerald-900/45 bg-[linear-gradient(180deg,rgba(7,18,12,0.96),rgba(10,24,16,0.94))]"
+        : "border-emerald-950/45 bg-[linear-gradient(180deg,rgba(11,23,16,0.92),rgba(15,31,22,0.86))]",
+      title: "text-slate-100",
+      badge: "border border-emerald-900/45 bg-emerald-950/45 text-emerald-100/80",
+      accent: "text-emerald-100/80",
     };
   }
 
   switch (item?.achievement?.rarity) {
     case "普通":
-      return { card: "border-slate-200/20 bg-slate-950", title: "text-white", badge: "border border-slate-200/20 bg-white/10 text-white", accent: "text-white" };
+      return { card: "border-emerald-900/35 bg-[linear-gradient(180deg,rgba(10,23,16,0.96),rgba(14,31,22,0.9))] shadow-[0_0_20px_rgba(34,197,94,0.06)]", title: "text-emerald-50", badge: "border border-emerald-200/20 bg-emerald-100/10 text-emerald-50", accent: "text-emerald-100" };
     case "稀有":
-      return { card: "border-sky-400/35 bg-sky-950/20 shadow-[0_0_24px_rgba(56,189,248,0.08)]", title: "text-sky-100", badge: "border border-sky-400/30 bg-sky-400/10 text-sky-100", accent: "text-sky-100" };
+      return { card: "border-emerald-500/25 bg-[linear-gradient(180deg,rgba(11,39,28,0.96),rgba(15,45,32,0.9))] shadow-[0_0_24px_rgba(52,211,153,0.08)]", title: "text-emerald-100", badge: "border border-emerald-400/25 bg-emerald-400/10 text-emerald-100", accent: "text-emerald-100" };
     case "史诗":
-      return { card: "border-violet-400/35 bg-violet-950/20 shadow-[0_0_24px_rgba(168,85,247,0.1)]", title: "text-violet-100", badge: "border border-violet-400/30 bg-violet-400/10 text-violet-100", accent: "text-violet-100" };
+      return { card: "border-violet-400/28 bg-[linear-gradient(180deg,rgba(14,34,22,0.96),rgba(23,44,31,0.9))] shadow-[0_0_24px_rgba(168,85,247,0.09)]", title: "text-violet-100", badge: "border border-violet-400/26 bg-violet-400/10 text-violet-100", accent: "text-violet-100" };
     case "传说":
-      return { card: "border-amber-300/40 bg-amber-950/15 shadow-[0_0_28px_rgba(251,191,36,0.12)]", title: "text-amber-100", badge: "border border-amber-300/30 bg-amber-300/10 text-amber-100", accent: "text-amber-100" };
+      return { card: "border-amber-300/34 bg-[linear-gradient(180deg,rgba(18,35,22,0.96),rgba(31,46,26,0.9))] shadow-[0_0_28px_rgba(251,191,36,0.11)]", title: "text-amber-100", badge: "border border-amber-300/28 bg-amber-300/10 text-amber-100", accent: "text-amber-100" };
     case "神话":
-      return { card: "border-rose-400/45 bg-[linear-gradient(135deg,rgba(127,29,29,0.5),rgba(127,29,29,0.18),rgba(190,24,93,0.18))] before:absolute before:inset-0 before:rounded-[inherit] before:bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] before:animate-[pulse_4s_ease-in-out_infinite] overflow-hidden shadow-[0_0_30px_rgba(244,63,94,0.14)]", title: "text-rose-50", badge: "border border-rose-300/35 bg-rose-300/10 text-rose-50", accent: "text-rose-100" };
+      return { card: "border-rose-400/36 bg-[linear-gradient(135deg,rgba(19,38,27,0.96),rgba(45,31,27,0.86),rgba(68,22,40,0.52))] before:absolute before:inset-0 before:rounded-[inherit] before:bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] before:animate-[pulse_4s_ease-in-out_infinite] overflow-hidden shadow-[0_0_30px_rgba(244,63,94,0.12)]", title: "text-rose-50", badge: "border border-rose-300/30 bg-rose-300/10 text-rose-50", accent: "text-rose-100" };
     default:
-      return { card: "border-slate-800 bg-slate-950", title: "text-white", badge: "border border-slate-700 bg-slate-800 text-slate-300", accent: "text-white" };
+      return { card: "border-emerald-950/40 bg-[linear-gradient(180deg,rgba(10,23,16,0.96),rgba(14,31,22,0.9))]", title: "text-emerald-50", badge: "border border-emerald-900/45 bg-emerald-950/45 text-emerald-100/80", accent: "text-emerald-100" };
   }
 }
 
 export function getAchievementBadgeClass(item) {
   if (item?.achievement?.hidden && item?.currentPlayerProgress?.achieved) {
-    return "border border-cyan-200/40 bg-cyan-100/10 text-cyan-100";
+    return "border border-emerald-200/35 bg-emerald-100/10 text-emerald-100";
   }
 
   switch (item?.achievement?.rarity) {
     case "普通":
-      return "border border-slate-200/20 bg-white/10 text-white";
+      return "border border-emerald-200/20 bg-emerald-100/10 text-emerald-50";
     case "稀有":
-      return "border border-sky-400/30 bg-sky-400/10 text-sky-100";
+      return "border border-emerald-400/25 bg-emerald-400/10 text-emerald-100";
     case "史诗":
       return "border border-violet-400/30 bg-violet-400/10 text-violet-100";
     case "传说":
@@ -655,6 +658,6 @@ export function getAchievementBadgeClass(item) {
     case "神话":
       return "border border-rose-300/35 bg-rose-300/10 text-rose-50";
     default:
-      return "border border-slate-700 bg-slate-800 text-slate-300";
+      return "border border-emerald-900/45 bg-emerald-950/45 text-emerald-100/80";
   }
 }

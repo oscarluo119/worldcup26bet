@@ -1,9 +1,16 @@
 ﻿import React, { useMemo, useState } from "react";
 import { useRef } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Award,
+  Bell,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Crown,
+  Eye,
   Flame,
   Home,
   KeyRound,
@@ -12,10 +19,15 @@ import {
   LogOut,
   Mail,
   Medal,
+  MoonStar,
   Plus,
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
+  Star,
+  SunMedium,
+  Target,
   Trophy,
   Unlock,
   User,
@@ -259,7 +271,7 @@ const CAMP_CONFIG = {
     name: "红方",
     accent: "text-rose-100",
     pill: "bg-rose-500/15 text-rose-200",
-    card: "border-rose-400/25 bg-rose-500/10",
+    card: "md3-card-tone-camp-red",
     panel: "from-rose-500/18 via-rose-500/8 to-transparent",
     glow: "shadow-[0_18px_50px_rgba(244,63,94,0.12)]",
   },
@@ -269,7 +281,7 @@ const CAMP_CONFIG = {
     name: "蓝方",
     accent: "text-sky-100",
     pill: "bg-sky-500/15 text-sky-200",
-    card: "border-sky-400/25 bg-sky-500/10",
+    card: "md3-card-tone-camp-blue",
     panel: "from-sky-500/18 via-sky-500/8 to-transparent",
     glow: "shadow-[0_18px_50px_rgba(14,165,233,0.12)]",
   },
@@ -683,6 +695,20 @@ const tabs = [
   { id: "admin", label: "管理", icon: Settings, adminOnly: true },
 ];
 
+const PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"];
+const THEME_OPTIONS = [
+  { id: "system", label: "跟随系统", icon: Sparkles },
+  { id: "light", label: "浅色", icon: SunMedium },
+  { id: "dark", label: "深色", icon: MoonStar },
+];
+
+function getThemeClass(themeMode) {
+  if (themeMode === "light") return "";
+  if (themeMode === "dark") return "theme-dark";
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "theme-dark";
+  return "";
+}
+
 function teamName(name) {
   return translateDisplayText(name);
 }
@@ -774,10 +800,29 @@ function getCampDisplayName(campId) {
   return meta ? `${meta.shortLabel} · ${meta.name}` : "未分组";
 }
 
+function buildRankingStats(player, playerPredictions, matchesById) {
+  const settledPredictions = playerPredictions.filter((prediction) => isSettledMatch(matchesById[prediction.matchId]));
+  const total = settledPredictions.reduce((sum, prediction) => sum + calculatePoints(prediction, matchesById[prediction.matchId]), 0);
+  const exactCount = settledPredictions.filter((prediction) => calculateBasePoints(prediction, matchesById[prediction.matchId]) === 4).length;
+  const netGoalOnlyCount = settledPredictions.filter((prediction) => calculateBasePoints(prediction, matchesById[prediction.matchId]) === 2).length;
+  const outcomeOnlyCount = settledPredictions.filter((prediction) => calculateBasePoints(prediction, matchesById[prediction.matchId]) === 1).length;
+  const outcomeCount = settledPredictions.filter((prediction) => calculateBasePoints(prediction, matchesById[prediction.matchId]) > 0).length;
+  return {
+    ...player,
+    total,
+    exactCount,
+    netGoalOnlyCount,
+    outcomeOnlyCount,
+    outcomeCount,
+    played: playerPredictions.length,
+  };
+}
+
 function comparePlayers(left, right) {
   return right.total - left.total
     || right.exactCount - left.exactCount
-    || right.outcomeCount - left.outcomeCount
+    || right.netGoalOnlyCount - left.netGoalOnlyCount
+    || right.outcomeOnlyCount - left.outcomeOnlyCount
     || right.played - left.played
     || new Date(left.joinedAt).getTime() - new Date(right.joinedAt).getTime();
 }
@@ -1134,32 +1179,272 @@ function sortStandingsTable(table) {
   );
 }
 
+function computeDateStreak(predictions) {
+  const uniqueDates = [...new Set((predictions || []).map((item) => formatBeijingDateKey(item.submittedAt)))].sort();
+  let best = 0;
+  let current = 0;
+  let previous = null;
+  let achievedAt = null;
+
+  uniqueDates.forEach((date) => {
+    if (!previous) {
+      current = 1;
+    } else {
+      const diff = (new Date(`${date}T00:00:00+08:00`).getTime() - new Date(`${previous}T00:00:00+08:00`).getTime()) / 86400000;
+      current = diff === 1 ? current + 1 : 1;
+    }
+
+    if (current > best) {
+      best = current;
+      achievedAt = predictions.find((item) => formatBeijingDateKey(item.submittedAt) === date)?.submittedAt || null;
+    }
+
+    previous = date;
+  });
+
+  return { count: best, achievedAt };
+}
+
 function getQualificationLabel(index) {
   if (index < 2) return { label: "直接出线区", className: "bg-emerald-500/15 text-emerald-200" };
   if (index === 2) return { label: "小组第三竞争区", className: "bg-amber-500/15 text-amber-200" };
-  return { label: "待追赶", className: "bg-slate-800 text-slate-400" };
+  return { label: "待追赶", className: "" };
 }
 
-function Pill({ children, className = "" }) {
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${className}`}>{children}</span>;
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+const CARD_TONE = {
+  default: "md3-outline-card",
+  tonal: "md3-tonal-card",
+  highlight: "md3-card-tone-highlight",
+  success: "md3-card-tone-success",
+  warning: "md3-card-tone-warning",
+  danger: "md3-card-tone-danger",
+  campRed: "md3-card-tone-camp-red",
+  campBlue: "md3-card-tone-camp-blue",
+};
+
+function ThemeToggle({ themeMode, onChange, compact = false }) {
+  return (
+    <div className={cn("flex items-center gap-1 rounded-full border p-1", compact ? "w-auto" : "w-full md:w-auto")} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 68%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-high) 88%, transparent)" }}>
+      {THEME_OPTIONS.map((option) => {
+        const Icon = option.icon;
+        const active = themeMode === option.id;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            className={cn("md3-button border-0 px-3 py-2 text-xs sm:text-sm", active ? "md3-button-tonal" : "md3-button-text")}
+            aria-pressed={active}
+            title={option.label}
+          >
+            <Icon className="h-4 w-4" />
+            {!compact && <span>{option.label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Pill({ children, className = "", ...props }) {
+  return <span className={`md3-chip ${className}`} {...props}>{children}</span>;
 }
 
 function Card({ children, className = "" }) {
-  return <div className={`rounded-2xl border border-slate-700/70 bg-slate-900/80 p-4 shadow-xl ${className}`}>{children}</div>;
+  return <div className={`md3-card ${className}`}>{children}</div>;
 }
 
-function DarkButton({ children, className = "", ...props }) {
-  return <button className={`rounded-xl bg-slate-800 text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 ${className}`} {...props}>{children}</button>;
+function M3Button({ children, tone = "filled", className = "", ...props }) {
+  const toneClass = {
+    filled: "md3-button-filled",
+    tonal: "md3-button-tonal",
+    outline: "md3-button-outline",
+    text: "md3-button-text",
+    error: "md3-button-error",
+  }[tone] || "md3-button-filled";
+
+  return <button className={`md3-button ${toneClass} ${className}`} {...props}>{children}</button>;
+}
+
+function DarkButton({ children, className = "", tone = "outline", ...props }) {
+  return <M3Button tone={tone} className={className} {...props}>{children}</M3Button>;
+}
+
+function M3SegmentedControl({ options, value, onChange, size = "default" }) {
+  return (
+    <div className="inline-flex flex-wrap gap-2 rounded-full">
+      {options.map((option) => {
+        const active = option.value === value;
+        const disabled = option.disabled;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => !disabled && onChange(option.value)}
+            disabled={disabled}
+            className={cn("md3-button min-h-0", active ? "md3-button-tonal" : "md3-button-outline", size === "sm" ? "px-3 py-2 text-xs" : "px-4 py-2.5 text-sm", disabled && "opacity-50")}
+          >
+            {option.icon ? <option.icon className="h-4 w-4" /> : null}
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function M3Progress({ value, max, className = "" }) {
+  const safeMax = Math.max(1, max || 1);
+  const width = `${Math.max(0, Math.min(100, (value / safeMax) * 100))}%`;
+  return <div className={`md3-progress ${className}`}><span style={{ width }} /></div>;
+}
+
+function EmptyState({ icon: Icon = Trophy, title, description, actionLabel, onAction }) {
+  return (
+    <div className="md3-outline-card md3-card flex flex-col items-center justify-center gap-3 px-5 py-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-[22px]" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 75%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>
+        <Icon className="h-7 w-7" />
+      </div>
+      <div>
+        <div className="text-lg font-black">{title}</div>
+        <p className="mt-1 text-sm md3-subtle">{description}</p>
+      </div>
+      {actionLabel && onAction ? <M3Button tone="tonal" onClick={onAction}>{actionLabel}</M3Button> : null}
+    </div>
+  );
+}
+
+function Snackbar({ open, message, tone = "info", onClose }) {
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const timer = window.setTimeout(() => onClose?.(), 2600);
+    return () => window.clearTimeout(timer);
+  }, [open, onClose]);
+
+  if (!open || !message) return null;
+  const Icon = tone === "error" ? XCircle : CheckCircle2;
+  return (
+    <div className="md3-snackbar">
+      <Icon className="h-5 w-5" style={{ color: tone === "error" ? "var(--md-sys-color-error)" : "var(--md-sys-color-primary)" }} />
+      <div className="flex-1">{message}</div>
+      <button type="button" onClick={onClose} className="text-xs font-bold md3-subtle">关闭</button>
+    </div>
+  );
+}
+
+function ConfirmDialog({ open, title, description, confirmLabel = "确认", tone = "filled", onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <div className="md3-dialog-backdrop" role="dialog" aria-modal="true">
+      <div className="md3-dialog">
+        <div className="mb-2 text-2xl font-black">{title}</div>
+        <p className="text-sm leading-6 md3-subtle">{description}</p>
+        <div className="mt-6 flex justify-end gap-3">
+          <M3Button tone="text" onClick={onCancel}>取消</M3Button>
+          <M3Button tone={tone} onClick={onConfirm}>{confirmLabel}</M3Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeroBanner() {
+  return (
+    <section className="md3-hero">
+      <div className="relative z-10 max-w-3xl">
+        <h1 className="text-3xl font-black tracking-tight sm:text-4xl">欢迎来到2026美加墨世界杯</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/86 sm:text-base">
+          和朋友一起预测每一场胜负与比分，在 2026 美加墨世界杯里看看谁才是真正最懂球的人。
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, setSelectedProfilePlayerId, currentPlayer, signOut, isAdmin, dataError }) {
+  const mainTabs = visibleTabs.filter((tab) => PRIMARY_NAV_IDS.includes(tab.id));
+  const extraTabs = visibleTabs.filter((tab) => !PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
+  const adminTabs = visibleTabs.filter((tab) => tab.id === "admin");
+
+  function renderTab(tab, mobile = false) {
+    const Icon = tab.icon;
+    const active = activeTab === tab.id;
+    return (
+      <button
+        key={tab.id}
+        type="button"
+        onClick={() => {
+          if (tab.id === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
+          setActiveTab(tab.id);
+        }}
+        className={cn(
+          "group flex items-center gap-3 rounded-[22px] px-4 py-3 text-left transition",
+          mobile ? "min-w-0 flex-1 flex-col gap-1 px-2 py-2 text-center text-[11px]" : "w-full text-sm font-semibold",
+          active ? "md3-filled-card" : "md3-outline-card",
+        )}
+      >
+        <span className={cn("flex items-center justify-center rounded-full", mobile ? "h-8 w-8" : "h-10 w-10")} style={{ background: active ? "color-mix(in srgb, var(--md-sys-color-primary-container) 92%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)", color: active ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)" }}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className={cn("min-w-0", mobile ? "truncate" : "flex-1")}>{tab.label}</span>
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <aside className="md3-nav-drawer">
+        <div className="md3-card md3-surface sticky top-5 flex max-h-[calc(100vh-40px)] flex-col overflow-hidden">
+          <div className="flex items-center gap-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-[24px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white" }}>
+              <Trophy className="h-7 w-7" />
+            </div>
+            <div>
+              <div className="text-lg font-black">世界杯竞猜局</div>
+              <div className="text-xs md3-subtle">World Cup Prediction Club</div>
+            </div>
+          </div>
+          <div className="mt-5 rounded-[24px] border p-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
+            <div className="flex items-center gap-3">
+              <UserBadge player={currentPlayer} size="h-12 w-12" text="text-lg" />
+              <div className="min-w-0">
+                <div className="truncate font-black">{currentPlayer?.name}</div>
+                <div className="truncate text-xs md3-subtle">{currentPlayer?.email}</div>
+              </div>
+            </div>
+            {isAdmin ? <Pill className="mt-3">{`管理员模式`}</Pill> : null}
+            <M3Button tone="outline" onClick={signOut} className="mt-4 w-full justify-center">
+              <LogOut className="h-4 w-4" />
+              退出登录
+            </M3Button>
+            {dataError ? <div className="mt-3 rounded-[18px] border px-3 py-2 text-xs" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 35%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 84%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>{dataError}</div> : null}
+          </div>
+          <nav className="mt-5 flex-1 overflow-auto pr-1">
+            <div className="space-y-2">{mainTabs.map((tab) => renderTab(tab))}</div>
+            {extraTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">扩展内容</div><div className="space-y-2">{extraTabs.map((tab) => renderTab(tab))}</div></div> : null}
+            {adminTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">管理入口</div><div className="space-y-2">{adminTabs.map((tab) => renderTab(tab))}</div></div> : null}
+          </nav>
+        </div>
+      </aside>
+      <nav className="md3-bottom-nav">
+        {mainTabs.map((tab) => renderTab(tab, true))}
+      </nav>
+    </>
+  );
 }
 
 function AvatarBadge({ children, size = "h-10 w-10", text = "text-xl" }) {
-  return <div className={`flex ${size} items-center justify-center rounded-xl border border-slate-700 bg-slate-800 ${text} text-slate-100`}>{children}</div>;
+  return <div className={`flex ${size} items-center justify-center rounded-[20px] border ${text}`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)", color: "var(--md-sys-color-on-surface)" }}>{children}</div>;
 }
 
 function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
   const label = (player?.name || player?.email || "").trim().slice(0, 1).toUpperCase();
   return (
-    <div className={`flex ${size} shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-800 ${text} font-black text-slate-100`}>
+    <div className={`flex ${size} shrink-0 items-center justify-center rounded-[20px] border ${text} font-black`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "linear-gradient(135deg, color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent), color-mix(in srgb, var(--md-sys-color-tertiary-container) 55%, transparent))", color: "var(--md-sys-color-on-primary-container)" }}>
       {player?.avatarEmoji || label || <User className="h-4 w-4" />}
     </div>
   );
@@ -1187,7 +1472,7 @@ function EmojiPicker({ value, onChange, disabled = false }) {
             type="button"
             disabled={disabled}
             onClick={() => onChange(emoji)}
-            className={`flex h-10 w-full items-center justify-center rounded-xl border text-xl transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-cyan-300 bg-cyan-500/15 shadow-lg shadow-cyan-950/30" : "border-slate-700 bg-slate-950 hover:bg-slate-800"}`}
+            className={`flex h-10 w-full items-center justify-center rounded-xl border text-xl transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-emerald-300 bg-emerald-500/15 shadow-lg shadow-emerald-950/30" : "border-slate-700 bg-slate-950 hover:bg-emerald-950/45"}`}
             aria-label={`选择 ${emoji} 作为头像`}
           >
             {emoji}
@@ -1200,14 +1485,14 @@ function EmojiPicker({ value, onChange, disabled = false }) {
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
-    <Card className="relative overflow-hidden">
-      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-slate-800/70" />
-      <div className="flex items-center gap-3">
-        <div className="rounded-2xl bg-slate-800 p-3"><Icon className="h-5 w-5" /></div>
+    <Card className="md3-filled-card relative overflow-hidden">
+      <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-70" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--md-sys-color-secondary) 32%, transparent), transparent 65%)" }} />
+      <div className="relative flex items-center gap-3">
+        <div className="rounded-[20px] p-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}><Icon className="h-5 w-5" /></div>
         <div>
-          <div className="text-sm text-slate-400">{label}</div>
-          <div className="text-2xl font-black tracking-tight text-slate-100">{value}</div>
-          {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
+          <div className="text-sm md3-subtle">{label}</div>
+          <div className="text-2xl font-black tracking-tight">{value}</div>
+          {sub && <div className="mt-1 text-xs md3-subtle">{sub}</div>}
         </div>
       </div>
     </Card>
@@ -1216,10 +1501,10 @@ function StatCard({ icon: Icon, label, value, sub }) {
 
 function LoadingScreen({ message = "正在加载..." }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
-      <div className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4">
-        <Loader2 className="h-5 w-5 animate-spin text-cyan-200" />
-        <span className="text-sm font-bold text-slate-300">{message}</span>
+    <div className="md3-app flex min-h-screen items-center justify-center px-4">
+      <div className="md3-card flex items-center gap-3 px-5 py-4">
+        <Loader2 className="h-5 w-5 animate-spin" style={{ color: "var(--md-sys-color-primary)" }} />
+        <span className="text-sm font-bold">{message}</span>
       </div>
     </div>
   );
@@ -1227,13 +1512,13 @@ function LoadingScreen({ message = "正在加载..." }) {
 
 function SupabaseSetupScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
+    <div className="md3-app flex min-h-screen items-center justify-center px-4">
       <Card className="max-w-xl">
         <div className="mb-3 flex items-center gap-3">
-          <ShieldCheck className="h-6 w-6 text-cyan-200" />
+          <ShieldCheck className="h-6 w-6" style={{ color: "var(--md-sys-color-primary)" }} />
           <h1 className="text-2xl font-black">需要配置 Supabase</h1>
         </div>
-        <p className="text-sm leading-relaxed text-slate-400">
+        <p className="text-sm leading-relaxed md3-subtle">
           请根据 .env.example 创建 .env.local，并填写 VITE_SUPABASE_URL、VITE_SUPABASE_ANON_KEY 和 VITE_ADMIN_EMAILS。
         </p>
       </Card>
@@ -1297,56 +1582,59 @@ function AuthScreen({ onSignedIn }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
+    <div className="md3-app flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900">
-            <Trophy className="h-8 w-8 text-cyan-200" />
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[28px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white", boxShadow: "var(--md-shadow-2)" }}>
+            <Trophy className="h-8 w-8" />
           </div>
           <h1 className="text-3xl font-black">世界杯竞猜局</h1>
-          <p className="mt-2 text-sm text-slate-400">登录后才能提交竞猜、查看朋友预测和排行榜。</p>
         </div>
         <Card>
-          <div className="mb-5 grid grid-cols-2 rounded-2xl bg-slate-950 p-1">
-            <button type="button" onClick={() => setMode("login")} className={`rounded-xl px-3 py-2 text-sm font-black ${!isRegister ? "bg-slate-800 text-slate-50" : "text-slate-500"}`}>登录</button>
-            <button type="button" onClick={() => setMode("register")} className={`rounded-xl px-3 py-2 text-sm font-black ${isRegister ? "bg-slate-800 text-slate-50" : "text-slate-500"}`}>注册</button>
-          </div>
+          <M3SegmentedControl
+            options={[
+              { value: "login", label: "登录" },
+              { value: "register", label: "注册" },
+            ]}
+            value={mode}
+            onChange={setMode}
+          />
           <form onSubmit={submitAuth} className="space-y-4">
             {isRegister && (
               <label className="block">
-                <span className="mb-2 block text-sm font-bold text-slate-300">用户名</span>
-                <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
-                  <User className="h-4 w-4 text-slate-500" />
-                  <input value={username} onChange={(event) => setUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="例如 Oscar" />
+                <span className="md3-label">用户名</span>
+                <div className="flex items-center gap-2 rounded-[18px] px-4 py-3 md3-field">
+                  <User className="h-4 w-4 md3-subtle" />
+                  <input value={username} onChange={(event) => setUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="例如 Oscar" />
                 </div>
               </label>
             )}
             {isRegister && (
               <div>
-                <div className="mb-2 text-sm font-bold text-slate-300">选择头像</div>
+                <div className="md3-label">选择头像</div>
                 <EmojiPicker value={avatarEmoji} onChange={setAvatarEmoji} disabled={loading} />
               </div>
             )}
             <label className="block">
-              <span className="mb-2 block text-sm font-bold text-slate-300">邮箱</span>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
-                <Mail className="h-4 w-4 text-slate-500" />
-                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="you@example.com" />
+              <span className="md3-label">邮箱</span>
+              <div className="flex items-center gap-2 rounded-[18px] px-4 py-3 md3-field">
+                <Mail className="h-4 w-4 md3-subtle" />
+                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="you@example.com" />
               </div>
             </label>
             <label className="block">
-              <span className="mb-2 block text-sm font-bold text-slate-300">密码</span>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
-                <KeyRound className="h-4 w-4 text-slate-500" />
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="至少 6 位密码" />
+              <span className="md3-label">密码</span>
+              <div className="flex items-center gap-2 rounded-[18px] px-4 py-3 md3-field">
+                <KeyRound className="h-4 w-4 md3-subtle" />
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="至少 6 位密码" />
               </div>
             </label>
-            {error && <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{error}</div>}
-            {message && <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">{message}</div>}
-            <button disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-4 py-3 text-sm font-black text-cyan-50 transition hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-50">
+            {error && <div className="rounded-[18px] border px-4 py-3 text-sm" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 32%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 82%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>{error}</div>}
+            {message && <div className="rounded-[18px] border px-4 py-3 text-sm" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-primary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-primary-container) 84%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>{message}</div>}
+            <M3Button disabled={loading} className="w-full justify-center">
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {isRegister ? "注册并进入" : "登录竞猜"}
-            </button>
+            </M3Button>
           </form>
         </Card>
       </div>
@@ -1359,7 +1647,7 @@ function MatchStatus({ match }) {
   if (liveLabel) return <Pill className={getLivePhasePillClass(match)}>{liveLabel}</Pill>;
   if (match.status === "settled") return <Pill className="bg-emerald-500/15 text-emerald-200">已结算</Pill>;
   if (isMatchLocked(match)) return <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill>;
-  return <Pill className="bg-sky-500/15 text-sky-200">可竞猜</Pill>;
+  return <Pill style={{ background: "var(--md-sys-color-tertiary-container)", color: "var(--md-sys-color-on-tertiary-container)" }}>可竞猜</Pill>;
 }
 
 function MatchCountdown({ match, now }) {
@@ -1371,18 +1659,18 @@ function MatchCountdown({ match, now }) {
   if (match?.liveState?.matchPhase === "finished") return <Pill className="bg-emerald-500/15 text-emerald-200">比赛已结束</Pill>;
   if (match.status === "settled") return <Pill className="bg-emerald-500/15 text-emerald-200">已结束</Pill>;
   if (isMatchLocked(match, now)) return <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill>;
-  return <Pill className="bg-cyan-500/15 text-cyan-200">距离锁定：{formatCountdown(match.kickoff, now)}</Pill>;
+  return <Pill style={{ background: "var(--md-sys-color-secondary-container)", color: "var(--md-sys-color-on-secondary-container)" }}>距离锁定：{formatCountdown(match.kickoff, now)}</Pill>;
 }
 
 function MatchScore({ match }) {
   const score = getMatchDisplayScores(match);
-  if (!Number.isFinite(score.home) || !Number.isFinite(score.away)) return <span className="text-slate-500">vs</span>;
-  return <span className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1 text-base font-black text-slate-100">{score.home} : {score.away}</span>;
+  if (!Number.isFinite(score.home) || !Number.isFinite(score.away)) return <span className="md3-subtle">vs</span>;
+  return <span className="rounded-[16px] border px-3 py-1 text-base font-black" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 86%, transparent)" }}>{score.home} : {score.away}</span>;
 }
 
 function RegulationSettlementNotice({ match, className = "" }) {
   if (!isRegulationSettledWhileLiveContinues(match)) return null;
-  return <div className={`rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 ${className}`}>竞猜已按常规时间结算，实时比分仅供观赛。</div>;
+  return <div className={`rounded-[18px] border px-3 py-2 text-xs ${className}`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-secondary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 58%, transparent)", color: "var(--md-sys-color-on-secondary-container)" }}>竞猜已按常规时间结算，实时比分仅供观赛。</div>;
 }
 
 export default function WorldCupPredictionMVP() {
@@ -1390,6 +1678,12 @@ export default function WorldCupPredictionMVP() {
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState("");
+  const [themeMode, setThemeMode] = useState(() => {
+    if (typeof window === "undefined") return "dark";
+    return window.localStorage.getItem("worldcup-theme-mode") || "dark";
+  });
+  const [snackbar, setSnackbar] = useState({ open: false, message: "", tone: "info" });
+  const [dialog, setDialog] = useState({ open: false, title: "", description: "", confirmLabel: "确认", tone: "filled", onConfirm: null });
   const [activeTab, setActiveTab] = useState("home");
   const [players, setPlayers] = useState(initialPlayers);
   const [currentPlayerId, setCurrentPlayerId] = useState("");
@@ -1425,6 +1719,29 @@ export default function WorldCupPredictionMVP() {
     return kickoff < earliest ? kickoff : earliest;
   }, new Date(matches[0]?.kickoff || Date.now())), [matches]);
   const funPredictionLocked = new Date() >= firstKickoff;
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.localStorage.setItem("worldcup-theme-mode", themeMode);
+    document.documentElement.classList.toggle("theme-dark", getThemeClass(themeMode) === "theme-dark");
+    return undefined;
+  }, [themeMode]);
+
+  function openSnackbar(message, tone = "info") {
+    setSnackbar({ open: true, message, tone });
+  }
+
+  function closeSnackbar() {
+    setSnackbar((prev) => ({ ...prev, open: false }));
+  }
+
+  function openDialog(config) {
+    setDialog({ open: true, confirmLabel: "确认", tone: "filled", ...config });
+  }
+
+  function closeDialog() {
+    setDialog({ open: false, title: "", description: "", confirmLabel: "确认", tone: "filled", onConfirm: null });
+  }
 
   React.useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -1584,26 +1901,26 @@ export default function WorldCupPredictionMVP() {
     if (!isAdmin && activeTab === "admin") setActiveTab("home");
   }, [isAdmin, activeTab]);
 
-  const rankings = useMemo(() => players.map((player) => {
-    const playerPredictions = predictions.filter((p) => p.playerId === player.id);
-    const settledPredictions = playerPredictions.filter((p) => isSettledMatch(matches.find((m) => m.id === p.matchId)));
-    const total = settledPredictions.reduce((sum, p) => sum + calculatePoints(p, matches.find((m) => m.id === p.matchId)), 0);
-    const exactCount = settledPredictions.filter((p) => calculateBasePoints(p, matches.find((m) => m.id === p.matchId)) === 4).length;
-    const outcomeCount = settledPredictions.filter((p) => calculateBasePoints(p, matches.find((m) => m.id === p.matchId)) > 0).length;
-    return { ...player, total, exactCount, outcomeCount, played: playerPredictions.length };
-  }).sort((a, b) => b.total - a.total || b.exactCount - a.exactCount || b.outcomeCount - a.outcomeCount || b.played - a.played || new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime()), [players, predictions, matches]);
+  const matchesById = useMemo(() => Object.fromEntries(matches.map((match) => [match.id, match])), [matches]);
+
+  const rankings = useMemo(() => players
+    .map((player) => {
+      const playerPredictions = predictions.filter((prediction) => prediction.playerId === player.id);
+      return buildRankingStats(player, playerPredictions, matchesById);
+    })
+    .sort(comparePlayers), [players, predictions, matchesById]);
 
   const rankingTrend = useMemo(() => {
     const settledMatches = matches.filter(isSettledMatch).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
+    const settledMatchesById = Object.fromEntries(settledMatches.map((match) => [match.id, match]));
     return settledMatches.map((currentMatch, index) => {
       const includedMatchIds = new Set(settledMatches.slice(0, index + 1).map((m) => m.id));
-      const snapshot = players.map((player) => {
-        const playerPredictions = predictions.filter((p) => p.playerId === player.id && includedMatchIds.has(p.matchId));
-        const total = playerPredictions.reduce((sum, prediction) => sum + calculatePoints(prediction, matches.find((m) => m.id === prediction.matchId)), 0);
-        const exactCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, matches.find((m) => m.id === prediction.matchId)) === 4).length;
-        const outcomeCount = playerPredictions.filter((prediction) => calculateBasePoints(prediction, matches.find((m) => m.id === prediction.matchId)) > 0).length;
-        return { ...player, total, exactCount, outcomeCount, played: playerPredictions.length };
-      }).sort((a, b) => b.total - a.total || b.exactCount - a.exactCount || b.outcomeCount - a.outcomeCount || b.played - a.played || new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
+      const snapshot = players
+        .map((player) => {
+          const playerPredictions = predictions.filter((prediction) => prediction.playerId === player.id && includedMatchIds.has(prediction.matchId));
+          return buildRankingStats(player, playerPredictions, settledMatchesById);
+        })
+        .sort(comparePlayers);
       const row = { label: `第${index + 1}场`, match: `${teamName(currentMatch.home)} ${currentMatch.homeScore}:${currentMatch.awayScore} ${teamName(currentMatch.away)}` };
       snapshot.forEach((player) => { row[player.id] = player.total; });
       return row;
@@ -1628,7 +1945,7 @@ export default function WorldCupPredictionMVP() {
     }).sort((a, b) => b.maxStreak - a.maxStreak || new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
   }, [players, predictions, matches]);
 
-  const reverseLightPlayer = useMemo(() => [...rankings].sort((a, b) => a.total - b.total || a.exactCount - b.exactCount || a.outcomeCount - b.outcomeCount || b.played - a.played)[0], [rankings]);
+  const reverseLightPlayer = useMemo(() => [...rankings].sort((a, b) => a.total - b.total || a.exactCount - b.exactCount || a.netGoalOnlyCount - b.netGoalOnlyCount || a.outcomeOnlyCount - b.outcomeOnlyCount || b.played - a.played || new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())[0], [rankings]);
 
   const dailyBestPlayers = useMemo(() => {
     const settledMatches = matches.filter(isSettledMatch).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
@@ -1686,7 +2003,10 @@ export default function WorldCupPredictionMVP() {
   const worldCupStandings = useMemo(() => buildWorldCupStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
   const campBattleSummary = useMemo(() => buildCampBattleSummary(rankings, matches, predictions), [rankings, matches, predictions]);
-
+  const nextOpenMatch = useMemo(
+    () => [...matches].filter((match) => !isMatchLocked(match, currentTime)).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())[0],
+    [matches, currentTime],
+  );
   React.useEffect(() => {
     setSelectedMatchId((prev) => {
       if (!scheduleVisibleMatches.length) return "";
@@ -1697,6 +2017,7 @@ export default function WorldCupPredictionMVP() {
   async function upsertPrediction(matchId, home, away) {
     const match = matches.find((m) => m.id === matchId);
     if (!currentPlayerId || !match || isMatchLocked(match, currentTime) || !Number.isFinite(home) || !Number.isFinite(away)) return;
+    const existed = predictions.some((p) => p.playerId === currentPlayerId && p.matchId === matchId);
     const safeHome = Math.max(0, Math.floor(home));
     const safeAway = Math.max(0, Math.floor(away));
     const submittedAt = new Date().toISOString();
@@ -1713,6 +2034,7 @@ export default function WorldCupPredictionMVP() {
       .single();
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     const saved = mapPrediction(data);
@@ -1721,6 +2043,7 @@ export default function WorldCupPredictionMVP() {
       if (existing) return prev.map((p) => (p.id === existing.id ? saved : p));
       return [...prev, saved];
     });
+    openSnackbar(existed ? "竞猜已更新" : "竞猜提交成功");
   }
 
   async function updateMatchResult(matchId, homeScore, awayScore) {
@@ -1738,6 +2061,7 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: nextHome, awayScore: nextAway, status: "settled" } : m));
@@ -1745,6 +2069,7 @@ export default function WorldCupPredictionMVP() {
       ...prev,
       [resultKey]: { homeScore: nextHome, awayScore: nextAway },
     }));
+    openSnackbar("比赛已结算");
   }
 
   async function clearMatchResult(matchId) {
@@ -1758,6 +2083,7 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: null, awayScore: null, status: "open" } : m));
@@ -1766,6 +2092,7 @@ export default function WorldCupPredictionMVP() {
       delete next[resultKey];
       return next;
     });
+    openSnackbar("比赛结果已清除");
   }
 
   async function toggleLock(matchId) {
@@ -1781,9 +2108,11 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, status: nextStatus } : m));
+    openSnackbar(nextStatus === "closed" ? "比赛已锁定" : "比赛已重新开放");
   }
 
   async function saveFunPrediction(champion, goldenBoot, firstRedCardTeam, totalGoals) {
@@ -1805,12 +2134,14 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     setFunPredictions((prev) => ({
       ...prev,
       [currentPlayerId]: { champion: cleanChampion, goldenBoot: cleanGoldenBoot, firstRedCardTeam: cleanFirstRedCardTeam, totalGoals: cleanTotalGoals, submittedAt },
     }));
+    openSnackbar("趣味预测已保存");
   }
 
   async function saveFunResults(nextResults) {
@@ -1823,9 +2154,11 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return;
     }
     setFunResults(nextResults);
+    openSnackbar("趣味预测答案已更新");
   }
 
   async function updateProfile(profile) {
@@ -1843,10 +2176,12 @@ export default function WorldCupPredictionMVP() {
       });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return false;
     }
     const updatedPlayer = mapProfile(data);
     setPlayers((prev) => prev.map((player) => (player.id === updatedPlayer.id ? updatedPlayer : player)));
+    openSnackbar("个人资料已更新");
     return true;
   }
 
@@ -1858,11 +2193,13 @@ export default function WorldCupPredictionMVP() {
     });
     if (error) {
       setDataError(error.message);
+      openSnackbar(error.message, "error");
       return false;
     }
     setPlayers((prev) => prev.map((player) => (
       player.id === userId ? { ...player, campId: campId || null } : player
     )));
+    openSnackbar("阵营分配已更新");
     return true;
   }
 
@@ -1882,58 +2219,66 @@ export default function WorldCupPredictionMVP() {
   if (dataLoading && !players.length) return <LoadingScreen message="正在加载竞猜数据..." />;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 lg:flex-row">
-        <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-48px)] lg:w-72">
-          <Card className="h-full bg-slate-950/80">
-            <div className="flex items-center gap-3">
-              <AvatarBadge size="h-12 w-12" text="text-xl"><Trophy className="h-7 w-7" /></AvatarBadge>
-              <div><div className="text-lg font-black">世界杯竞猜局</div><div className="text-xs text-slate-500">Oscar&apos;s World Cup Room</div></div>
-            </div>
-            <div className="mt-5 rounded-2xl bg-slate-800/60 p-3">
-              <div className="flex items-center gap-3">
-                <UserBadge player={currentPlayer} size="h-11 w-11" text="text-base" />
-                <div className="min-w-0">
-                  <div className="truncate font-black">{currentPlayer?.name}</div>
-                  <div className="truncate text-xs text-slate-500">{currentPlayer?.email}</div>
-                </div>
-              </div>
-              {isAdmin && <Pill className="mt-3 bg-emerald-500/15 text-emerald-200">管理员</Pill>}
-              <DarkButton onClick={signOut} className="mt-3 flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-black"><LogOut className="h-4 w-4" />退出登录</DarkButton>
-              {dataError && <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{dataError}</div>}
-            </div>
-            <nav className="mt-5 space-y-2">
-              {visibleTabs.map((tab) => {
-                const Icon = tab.icon;
-                const active = activeTab === tab.id;
-                return <button key={tab.id} onClick={() => { if (tab.id === "playerProfile") setSelectedProfilePlayerId(currentPlayerId); setActiveTab(tab.id); }} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition ${active ? "bg-slate-800 text-slate-50 shadow-lg" : "bg-slate-900/70 text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`}><Icon className="h-4 w-4" />{tab.label}</button>;
-              })}
-            </nav>
-          </Card>
-        </aside>
-        <main className="min-w-0 flex-1">
-          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} />}
+    <div className={cn("md3-app", getThemeClass(themeMode))}>
+      <div className="md3-shell">
+        <SideNav
+          tabs={visibleTabs}
+          activeTab={activeTab}
+          currentPlayerId={currentPlayerId}
+          setActiveTab={setActiveTab}
+          setSelectedProfilePlayerId={setSelectedProfilePlayerId}
+          currentPlayer={currentPlayer}
+          signOut={signOut}
+          isAdmin={isAdmin}
+          dataError={dataError}
+        />
+        <main className="min-w-0 flex-1 space-y-5">
+          {activeTab === "home" ? <HeroBanner /> : null}
+          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
-          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
-          {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} />}
+          {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
           {activeTab === "campBattle" && <CampBattlePanel campBattleSummary={campBattleSummary} settledCount={settledCount} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
+      <Snackbar open={snackbar.open} message={snackbar.message} tone={snackbar.tone} onClose={closeSnackbar} />
+      <ConfirmDialog
+        open={dialog.open}
+        title={dialog.title}
+        description={dialog.description}
+        confirmLabel={dialog.confirmLabel}
+        tone={dialog.tone}
+        onCancel={closeDialog}
+        onConfirm={() => {
+          dialog.onConfirm?.();
+          closeDialog();
+        }}
+      />
     </div>
   );
 }
 
-function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile }) {
+function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections }) {
   const sortedMatches = [...matches].sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const todayMatches = sortedMatches.filter((match) => isSameBeijingDate(match.kickoff, currentTime));
-  const soonLockMatches = sortedMatches.filter((match) => !isMatchLocked(match, currentTime)).slice(0, 6);
+  const soonLockMatches = sortedMatches.filter((match) => !isMatchLocked(match, currentTime)).slice(0, 4);
+  const nextDeadline = soonLockMatches[0];
+  const myAchievementItems = achievementCollections?.currentPlayerItems || [];
+  const recentAchievements = [...myAchievementItems]
+    .filter((item) => item.currentPlayerProgress.achieved)
+    .sort((a, b) => new Date(b.currentPlayerProgress.achievedAt || 0).getTime() - new Date(a.currentPlayerProgress.achievedAt || 0).getTime())
+    .slice(0, 3);
+  const rankingIndex = rankings.findIndex((player) => player.id === currentPlayerId) + 1;
+  const stageMeta = nextDeadline ? (STAGES[nextDeadline.stage] || STAGES.GROUP) : (STAGES.GROUP);
+  const nextDeadlineValue = nextDeadline ? `${formatDateOnly(nextDeadline.kickoff).replace("星期", "周")} ${formatBeijingTime(nextDeadline.kickoff)}` : "--";
+  const nextDeadlineOpponent = nextDeadline ? `${teamName(nextDeadline.home)} vs ${teamName(nextDeadline.away)}` : "当前暂无可竞猜比赛";
 
   function openMatch(matchId) {
     setSelectedMatchId(matchId);
@@ -1941,83 +2286,173 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
   }
 
   return (
-    <section className="mt-6 space-y-6">
-      <Card>
+    <section className="space-y-5">
+      <div className="md3-stats-grid">
+        <StatCard icon={Trophy} label="我的排名" value={rankingIndex ? `#${rankingIndex}` : "--"} sub="主榜实时排名" />
+        <StatCard icon={Award} label="我的积分" value={`${myStats?.total || 0}分`} sub={`命中比分 ${myStats?.exactCount || 0} 次`} />
+        <StatCard icon={Target} label="已竞猜场次" value={`${myStats?.played || 0}场`} sub={`仍有 ${unPredictedCount} 场待提交`} />
+        <StatCard icon={Flame} label="赛事阶段" value={stageMeta.label} sub={`当前阶段倍率 x${stageMeta.multiplier}`} />
+        <StatCard icon={Bell} label="下场截止" value={nextDeadlineValue} sub={nextDeadlineOpponent} />
+      </div>
+
+      <Card className="md3-tonal-card">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-black">竞猜排行榜前三</h2>
-            <p className="text-sm text-slate-400">点击玩家名字进入个人主页。</p>
+            <h2 className="md3-section-title text-[1.7rem]">下一场比赛竞猜入口</h2>
           </div>
-          <DarkButton onClick={() => setActiveTab("ranking")} className="px-3 py-2 text-sm font-bold">查看完整榜单</DarkButton>
+          <M3Button tone="outline" onClick={() => setActiveTab("schedule")}>查看全部赛程</M3Button>
+        </div>
+        {nextDeadline ? (
+          <MatchFeatureCard
+            match={nextDeadline}
+            pred={predictions.find((prediction) => prediction.playerId === currentPlayerId && prediction.matchId === nextDeadline.id)}
+            now={currentTime}
+            onClick={() => openMatch(nextDeadline.id)}
+          />
+        ) : (
+          <EmptyState icon={CalendarDays} title="当前没有待提交的比赛" description="等新的赛程开放后，这里会自动出现最快截止的那一场。" actionLabel="查看积分榜" onAction={() => setActiveTab("ranking")} />
+        )}
+      </Card>
+
+      <Card className="md3-filled-card">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="md3-section-title text-[1.5rem]">排行榜 Top 3</h2>
+          </div>
+          <M3Button tone="text" onClick={() => setActiveTab("ranking")}>完整榜单</M3Button>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
           {rankings.slice(0, 3).map((player, index) => (
-            <button key={player.id} onClick={() => onOpenPlayerProfile(player.id)} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-3 text-left transition hover:bg-slate-800/80">
-              <div className="flex min-w-0 items-center gap-3">
-                <UserBadge player={player} size="h-9 w-9" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-black md:text-base">#{index + 1} {player.name}</div>
-                  <div className="truncate text-xs text-slate-500">命中比分 {player.exactCount} 场</div>
-                </div>
-              </div>
-              <div className="shrink-0 text-lg font-black md:text-xl">{player.total}</div>
-            </button>
+            <PodiumCard key={player.id} player={player} place={index + 1} onClick={() => onOpenPlayerProfile(player.id)} />
           ))}
         </div>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard icon={Crown} label="我的积分" value={`${myStats?.total || 0}分`} sub="已结算比赛累计" />
-        <StatCard icon={Medal} label="命中比分" value={`${myStats?.exactCount || 0}场`} sub="完全猜中比分" />
-        <StatCard icon={CalendarDays} label="未竞猜" value={`${unPredictedCount}场`} sub="记得开赛前提交" />
-        <StatCard icon={Users} label="当前排名" value={`#${rankings.findIndex((player) => player.id === currentPlayerId) + 1 || "-"}`} sub="点击玩家名可查看主页" />
+      <div className="grid gap-5 xl:grid-cols-2">
+        <HomeMatchSection title="今日比赛" matches={todayMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="今天暂无比赛" onOpenMatch={openMatch} />
+        <Card>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="md3-section-title text-[1.5rem]">最近获得的成就</h2>
+            </div>
+            <M3Button tone="text" onClick={() => setActiveTab("achievements")}>成就墙</M3Button>
+          </div>
+          {recentAchievements.length ? (
+            <div className="space-y-3">
+              {recentAchievements.map((item) => (
+                <div key={item.achievement.id} className="md3-outline-card md3-card px-4 py-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="font-black">{item.achievement.name}</div>
+                    <Pill className={getAchievementBadgeClass(item)}>{item.achievement.rarity}</Pill>
+                  </div>
+                  <div className="text-sm md3-subtle">{item.achievement.description}</div>
+                  <M3Progress value={item.currentPlayerProgress.current} max={item.currentPlayerProgress.target} className="mt-3" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon={Sparkles} title="还没有点亮成就" description="先去提交几场比赛，第一批成就会很快解锁。" actionLabel="去竞猜" onAction={() => setActiveTab("schedule")} />
+          )}
+        </Card>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <HomeMatchSection title="今日比赛" subtitle="按北京时间统计今天的比赛" matches={todayMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="今天暂无比赛" onOpenMatch={openMatch} />
-        <HomeMatchSection title="即将锁定" subtitle="按开球时间排序，越靠前越需要尽快提交" matches={soonLockMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="暂无即将锁定的比赛" onOpenMatch={openMatch} />
-      </div>
+      <HomeMatchSection title="即将截止" matches={soonLockMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="暂无即将锁定的比赛" onOpenMatch={openMatch} />
     </section>
   );
 }
 
-function HomeMatchSection({ title, subtitle, matches, predictions, currentPlayerId, currentTime, emptyText, onOpenMatch }) {
+function HomeMatchSection({ title, matches, predictions, currentPlayerId, currentTime, emptyText, onOpenMatch }) {
   return (
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-black">{title}</h2>
-          <p className="text-sm text-slate-400">{subtitle}</p>
+          <h2 className="md3-section-title text-[1.5rem]">{title}</h2>
         </div>
-        <Pill className="bg-slate-800 text-slate-300">{matches.length} 场</Pill>
+        <Pill>{matches.length} 场</Pill>
       </div>
       <div className="space-y-3">
         {matches.length ? matches.map((match) => (
           <MatchListButton key={match.id} match={match} pred={predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id)} active={false} now={currentTime} onClick={() => onOpenMatch(match.id)} />
-        )) : <div className="rounded-2xl border border-slate-700 bg-slate-950 p-5 text-center text-sm text-slate-500">{emptyText}</div>}
+        )) : <EmptyState icon={CalendarDays} title={emptyText} description="新的比赛信息出现后，这里会自动补上。" />}
       </div>
     </Card>
+  );
+}
+
+function PodiumCard({ player, place, onClick }) {
+  const podiumTheme = {
+    1: { badge: "冠军", tone: "linear-gradient(135deg, rgba(240,207,99,0.35), rgba(159,122,16,0.1))", icon: Trophy, text: "text-amber-100" },
+    2: { badge: "亚军", tone: "linear-gradient(135deg, rgba(210,218,230,0.32), rgba(122,140,163,0.1))", icon: Medal, text: "text-slate-100" },
+    3: { badge: "季军", tone: "linear-gradient(135deg, rgba(211,144,96,0.32), rgba(115,66,31,0.08))", icon: Award, text: "text-orange-100" },
+  }[place];
+  const Icon = podiumTheme.icon;
+  return (
+    <button type="button" onClick={onClick} className="md3-card text-left">
+      <div className="absolute inset-0 opacity-80" style={{ background: podiumTheme.tone }} />
+      <div className="relative">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <Pill className="border-0 bg-black/10 text-current">{podiumTheme.badge}</Pill>
+          <Icon className={cn("h-5 w-5", podiumTheme.text)} />
+        </div>
+        <div className="flex items-start gap-3">
+          <UserBadge player={player} size="h-11 w-11" />
+          <div className="min-w-0">
+            <div className="break-all text-lg font-black leading-6">#{place} {player.name}</div>
+            <div className="mt-1 text-xs leading-5 md3-subtle">完全比分 {player.exactCount} 次</div>
+            <div className="text-xs leading-5 md3-subtle">命中结果 {player.outcomeCount} 次</div>
+          </div>
+        </div>
+        <div className="mt-4 text-3xl font-black">{player.total}<span className="ml-1 text-base font-semibold md3-subtle">分</span></div>
+      </div>
+    </button>
+  );
+}
+
+function MatchFeatureCard({ match, pred, now, onClick }) {
+  return (
+    <button type="button" onClick={onClick} className="md3-card w-full text-left">
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Pill>第 {match.no} 场</Pill>
+        <Pill>{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
+        <MatchStatus match={match} />
+        <MatchCountdown match={match} now={now} />
+      </div>
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 text-2xl font-black">
+            <TeamName name={match.home} logo={match.homeLogo} />
+            <span className="md3-subtle">vs</span>
+            <TeamName name={match.away} logo={match.awayLogo} />
+          </div>
+          <div className="mt-2 text-sm md3-subtle">{formatDateTime(match.kickoff)} · {match.city || match.group}</div>
+        </div>
+        <div className="rounded-[24px] px-4 py-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+          <div className="text-xs uppercase tracking-[0.18em] md3-subtle">我的提交</div>
+          <div className="mt-2 text-xl font-black">{pred ? `${pred.home}:${pred.away}` : "未提交"}</div>
+        </div>
+      </div>
+    </button>
   );
 }
 
 function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
   const stage = STAGES[match.stage] || STAGES.GROUP;
   return (
-    <button onClick={onClick} className={`w-full rounded-2xl border p-4 text-left transition ${active ? "border-cyan-300/40 bg-slate-800 shadow-lg shadow-cyan-950/20" : "border-slate-700 bg-slate-950/60 hover:bg-slate-800/80"}`}>
+    <button onClick={onClick} className={`md3-card w-full text-left ${active ? "md3-filled-card" : "md3-outline-card"}`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="mb-2 flex flex-wrap gap-2">
-            <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
-            <Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill>
+            <Pill>#{match.no}</Pill>
+            <Pill>{stage.label} x{stage.multiplier}</Pill>
             <MatchStatus match={match} />
             <MatchCountdown match={match} now={now} />
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
-            <Pill className={active ? "bg-cyan-500/15 text-cyan-200" : "bg-slate-800 text-slate-400"}>{active ? "收起详情" : "展开竞猜"}</Pill>
+            <Pill style={active ? { background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" } : undefined}>{active ? "收起详情" : "展开竞猜"}</Pill>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
-          <div className="mt-1 text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.group}</div>
+          <div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
+          <div className="mt-1 text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
-        <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-2 text-xs text-slate-500">我的预测：{pred.home}:{pred.away}</div>}</div>
+        <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-2 text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
       </div>
     </button>
   );
@@ -2027,33 +2462,33 @@ function getPlayerDisplayId(player) {
   return (player?.name || player?.email || "未命名用户").trim() || "未命名用户";
 }
 
-function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile }) {
+function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar }) {
   function handleMatchToggle(matchId) {
     setSelectedMatchId((prev) => (prev === matchId ? "" : matchId));
   }
 
   return (
-    <section className="mt-6">
+    <section>
       <Card>
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div><h2 className="text-xl font-black">赛程与竞猜</h2><p className="text-sm text-slate-400">开赛前可以修改，开赛后自动锁定。</p><p className="mt-2 text-xs leading-relaxed text-slate-500">竞猜页默认只显示当前比赛日、未来比赛日，以及最近 2 个已结束比赛日。更早历史比赛请到“完整赛程”页查看。</p></div>
-          <div className="flex gap-2"><div className="relative min-w-0"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索球队/阶段" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500" /></div><select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"><option value="ALL">全部</option>{Object.entries(STAGES).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></div>
+          <div><h2 className="md3-section-title text-[1.7rem]">赛程与竞猜</h2></div>
+          <div className="flex gap-2"><div className="relative min-w-0"><Search className="absolute left-3 top-3 h-4 w-4 md3-subtle" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索球队/阶段" className="md3-field w-full pl-9 pr-3 text-sm" /></div><select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="md3-select px-3 py-2 text-sm"><option value="ALL">全部</option>{Object.entries(STAGES).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></div>
         </div>
         <div className="space-y-6">
-          {Object.entries(groupedMatches).length ? Object.entries(groupedMatches).map(([date, items]) => <div key={date}><div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-400"><CalendarDays className="h-4 w-4" /> {date}</div><div className="space-y-3">{items.map((match) => {
+          {Object.entries(groupedMatches).length ? Object.entries(groupedMatches).map(([date, items]) => <div key={date}><div className="mb-3 flex items-center gap-2 text-sm font-black md3-subtle"><CalendarDays className="h-4 w-4" /> {date}</div><div className="space-y-3">{items.map((match) => {
             const pred = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id);
             const active = selectedMatchId === match.id;
             return (
-              <div key={match.id} className={`overflow-hidden rounded-3xl border transition ${active ? "border-cyan-300/30 bg-slate-900/70 shadow-xl shadow-cyan-950/20" : "border-transparent bg-transparent"}`}>
+              <div key={match.id} className={`overflow-hidden rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
                 <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
-                  <div className="border-t border-slate-700/80 px-4 pb-4 pt-4">
+                  <div className="border-t px-4 pb-4 pt-4 md3-divider">
                     <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} />
                   </div>
                 )}
               </div>
             );
-          })}</div></div>) : <div className="rounded-2xl border border-slate-700 bg-slate-950 p-6 text-center text-sm text-slate-500">当前筛选条件下没有可显示的比赛。更早历史比赛请到“完整赛程”页查看。</div>}
+          })}</div></div>) : <EmptyState icon={Search} title="没有匹配的比赛" description="当前筛选条件下没有可显示的比赛。更早历史比赛请到完整赛程页查看。" />}
         </div>
       </Card>
     </section>
@@ -2077,11 +2512,10 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
       <Card>
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><Medal className="h-3.5 w-3.5" /> 世界杯排名 · 小组积分</div>
+            <Pill className="mb-3"><Medal className="h-3.5 w-3.5" /> 世界杯排名 · 小组积分</Pill>
             <h2 className="text-3xl font-black tracking-tight">世界杯小组实时积分榜</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">根据管理员已结算的小组赛比分自动更新。玩家可以观察每个小组的积分、净胜球、进球数，以及直接出线和小组第三竞争形势。</p>
           </div>
-          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">已结算比赛</div><div className="mt-1 text-3xl font-black">{settledCount}</div></div>
+          <div className="md3-panel px-4 py-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">已结算比赛</div><div className="mt-1 text-3xl font-black">{settledCount}</div></div>
         </div>
       </Card>
 
@@ -2089,17 +2523,16 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
         <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-end">
           <div>
             <h3 className="text-xl font-black">出线形势说明</h3>
-            <p className="text-sm text-slate-400">每组前二进入直接出线区；小组第三进入竞争区，最终会根据各组第三名成绩比较。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Pill className="bg-emerald-500/15 text-emerald-200">前二直接出线</Pill>
             <Pill className="bg-amber-500/15 text-amber-200">小组第三竞争</Pill>
-            <Pill className="bg-slate-800 text-slate-400">第四名待追赶</Pill>
+            <Pill>第四名待追赶</Pill>
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {bestThirdTeams.slice(0, 8).map((team, index) => (
-            <div key={`${team.group}-${team.team}`} className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3">
+            <div key={`${team.group}-${team.team}`} className="md3-card md3-card-tone-warning p-3">
               <div className="mb-1 text-xs font-black text-amber-200">小组第三竞争 #{index + 1}</div>
               <div className="font-black"><TeamName name={team.team} logo={team.logo} /></div>
               <div className="mt-1 text-xs text-slate-400">{team.group} · {team.points}分 · 净胜球 {team.goalDifference} · 进球 {team.goalsFor}</div>
@@ -2121,13 +2554,12 @@ function GroupStandingsCard({ group, table }) {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-black">{group}</h3>
-          <p className="text-sm text-slate-400">实时积分 / 净胜球 / 进球数</p>
         </div>
-        <Pill className="bg-slate-800 text-slate-300">{table.reduce((sum, team) => sum + team.played, 0) / 2} 场已赛</Pill>
+        <Pill>{table.reduce((sum, team) => sum + team.played, 0) / 2} 场已赛</Pill>
       </div>
-      <div className="overflow-hidden rounded-2xl border border-slate-700">
+      <div className="md3-table-shell">
         <table className="w-full min-w-[620px] text-left text-sm">
-          <thead className="bg-slate-800 text-slate-400">
+          <thead className="md3-table-head">
             <tr>
               <th className="px-3 py-3">排名</th>
               <th className="px-3 py-3">球队</th>
@@ -2145,7 +2577,7 @@ function GroupStandingsCard({ group, table }) {
             {table.map((team, index) => {
               const status = getQualificationLabel(index);
               return (
-                <tr key={team.team} className="border-t border-slate-700 bg-slate-950/60">
+                <tr key={team.team} className="md3-table-row">
                   <td className="px-3 py-3 font-black">#{index + 1}</td>
                   <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} /></td>
                   <td className="px-3 py-3 text-center text-lg font-black text-emerald-200">{team.points}</td>
@@ -2186,24 +2618,23 @@ function FullScheduleCalendar({ schedule, source }) {
       <Card>
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><CalendarDays className="h-3.5 w-3.5" /> 完整赛程 · 北京时间</div>
+            <Pill className="mb-3"><CalendarDays className="h-3.5 w-3.5" /> 完整赛程 · 北京时间</Pill>
             <h2 className="text-3xl font-black tracking-tight">完整赛程列表</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">赛程优先读取 WorldCupAPI 官方 fixtures，并统一转换为北京时间；API 失败时使用本地备用赛程。</p>
             <Pill className={source === "worldcupapi" ? "mt-3 bg-emerald-500/15 text-emerald-200" : "mt-3 bg-amber-500/15 text-amber-200"}>{source === "worldcupapi" ? "WorldCupAPI 实时赛程" : "本地备用赛程"}</Pill>
           </div>
-          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">比赛总数</div><div className="mt-1 text-3xl font-black">{schedule.length}</div></div>
+          <div className="md3-panel px-4 py-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">比赛总数</div><div className="mt-1 text-3xl font-black">{schedule.length}</div></div>
         </div>
       </Card>
       <Card>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div><h3 className="text-xl font-black">快速浏览</h3><p className="text-sm text-slate-400">适合手机端按日期查看，可按球队、球馆、城市或阶段搜索。</p></div>
-          <div className="flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input value={scheduleQuery} onChange={(e) => setScheduleQuery(e.target.value)} placeholder="搜索球队 / 球馆 / 城市" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500 sm:w-64" /></div><select value={scheduleStage} onChange={(e) => setScheduleStage(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none">{stageOptions.map((stage) => <option key={stage} value={stage}>{stage === "ALL" ? "全部小组/阶段" : stage}</option>)}</select></div>
+          <div><h3 className="text-xl font-black">快速浏览</h3></div>
+          <div className="flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0"><Search className="absolute left-3 top-2.5 h-4 w-4 md3-subtle" /><input value={scheduleQuery} onChange={(e) => setScheduleQuery(e.target.value)} placeholder="搜索球队 / 球馆 / 城市" className="md3-field w-full py-2 pl-9 pr-3 text-sm sm:w-64" /></div><select value={scheduleStage} onChange={(e) => setScheduleStage(e.target.value)} className="md3-select px-3 py-2 text-sm">{stageOptions.map((stage) => <option key={stage} value={stage}>{stage === "ALL" ? "全部小组/阶段" : stage}</option>)}</select></div>
         </div>
       </Card>
-      <Card>
-        <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">按日期列表</h3><p className="text-sm text-slate-400">每个比赛日集中显示，方便赛前快速查看当天赛程。</p></div><Pill className="bg-slate-800 text-slate-300">{filteredSchedule.length} 场</Pill></div>
+      <Card className={CARD_TONE.tonal}>
+        <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">按日期列表</h3></div><Pill>{filteredSchedule.length} 场</Pill></div>
         <div className="space-y-4">
-          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-300"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.id} match={match} />)}</div></div>)}
+          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="md3-panel p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black md3-subtle"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.id} match={match} />)}</div></div>)}
         </div>
       </Card>
     </section>
@@ -2213,11 +2644,11 @@ function FullScheduleCalendar({ schedule, source }) {
 function ScheduleLargeCard({ match }) {
   const now = useCurrentTime();
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3">
+    <div className="md3-panel-inset p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
-        <Pill className="bg-indigo-500/15 text-indigo-200">{match.group}</Pill>
-        <Pill className="bg-slate-800 text-slate-100">{formatBeijingTime(match.kickoff)} 北京时间</Pill>
+        <Pill>#{match.no}</Pill>
+        <Pill className="bg-emerald-500/15 text-emerald-200">{match.group}</Pill>
+        <Pill>{formatBeijingTime(match.kickoff)} 北京时间</Pill>
         <MatchStatus match={match} />
         <MatchCountdown match={match} now={now} />
       </div>
@@ -2275,38 +2706,38 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
 
   return (
     <div>
-      <div className="rounded-2xl bg-slate-950 p-4"><div className="text-sm font-bold text-slate-300">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black text-slate-500">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><DarkButton disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 px-4 py-3 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</DarkButton>{locked && <div className="mt-3 text-center text-xs text-slate-500">比赛已锁定，不能再修改预测。</div>}</div>
+      <div className="md3-outline-card md3-card p-4"><div className="text-sm font-bold md3-subtle">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black md3-subtle">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><M3Button disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</M3Button>{locked && <div className="mt-3 text-center text-xs md3-subtle">比赛已锁定，不能再修改预测。</div>}</div>
       <RegulationSettlementNotice match={match} className="mt-4" />
       <div className="mt-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-black">朋友预测</h3>
-          {!showAllPredictions && <Pill className="bg-slate-800 text-slate-400">开赛后公开</Pill>}
+          {!showAllPredictions && <Pill>开赛后公开</Pill>}
         </div>
         {showAllPredictions ? (
           <div className="grid gap-3 lg:grid-cols-2">
             {groupedFriendPredictions.map((group) => (
-              <div key={group.key} className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+              <div key={group.key} className="md3-outline-card md3-card p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="font-black">{group.title}</div>
-                  <Pill className="bg-slate-800 text-slate-300">{group.items.length} 人</Pill>
+                  <Pill>{group.items.length} 人</Pill>
                 </div>
                 <div className="space-y-2">
                   {group.items.map(({ player, prediction, isMe, points }) => (
-                    <div key={player.id} className="rounded-2xl bg-slate-800/60 px-3 py-3">
+                    <div key={player.id} className="rounded-[20px] px-3 py-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 82%, transparent)" }}>
                       <div className="flex items-center justify-between gap-3">
                         <button onClick={() => onOpenPlayerProfile?.(player.id)} className="min-w-0 text-left">
                           <div className="flex items-center gap-2">
-                            <span className="truncate font-bold hover:text-cyan-200">
+                            <span className="truncate font-bold hover:text-[color:var(--md-sys-color-primary)]">
                               {getPlayerDisplayId(player)}
                               {prediction ? ` ${prediction.home}:${prediction.away}` : ""}
                             </span>
                             {isMe && <span className="text-xs text-emerald-200">我</span>}
                           </div>
-                          <div className="mt-1 text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div>
+                          <div className="mt-1 text-xs md3-subtle">{prediction ? "已提交" : "未提交"}</div>
                         </button>
-                        {prediction ? <div className="text-sm font-black text-slate-200">{prediction.home}:{prediction.away}</div> : <div className="text-sm text-slate-500">--</div>}
+                        {prediction ? <div className="text-sm font-black">{prediction.home}:{prediction.away}</div> : <div className="text-sm md3-subtle">--</div>}
                       </div>
-                      {prediction && match.status === "settled" && <div className="mt-2 text-xs text-slate-500">{explainPoints(prediction, match)} · +{points}</div>}
+                      {prediction && match.status === "settled" && <div className="mt-2 text-xs md3-subtle">{explainPoints(prediction, match)} · +{points}</div>}
                     </div>
                   ))}
                 </div>
@@ -2314,7 +2745,7 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
             ))}
           </div>
         ) : (
-          <div className="rounded-2xl bg-slate-950 px-4 py-5 text-center text-sm text-slate-500">朋友预测会在开赛后按主胜、平局、客胜和未提交自动分组公开。</div>
+          <EmptyState icon={Eye} title="预测将在开赛后公开" description="朋友预测会在开赛后按主胜、平局、客胜和未提交自动分组展示。" />
         )}
       </div>
     </div>
@@ -2322,7 +2753,7 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
 }
 
 function ScoreInput({ label, value, disabled, onChange }) {
-  return <div><div className="mb-2 truncate text-center text-sm text-slate-400">{label}</div><input type="number" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-4 text-center text-3xl font-black outline-none disabled:opacity-50" /></div>;
+  return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
 }
 
 function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, locked, firstKickoff, funResults }) {
@@ -2348,36 +2779,36 @@ function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, lo
     });
   }, [players, funPredictions, funResults]);
   return (
-    <section className="mt-6 space-y-5"><Card><div className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</div><h2 className="text-3xl font-black tracking-tight">趣味预测栏</h2><p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">冠军、金靴、首张红牌球队和本届总进球数预测，必须在第一场世界杯比赛开始前提交并锁定。赢家没有额外积分奖励，只获得趣味称号。</p></div><div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold text-slate-400">锁定时间</div><div className="mt-1 text-lg font-black">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-5 lg:grid-cols-[420px_1fr]"><Card><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">我的趣味预测</h3><p className="text-sm text-slate-400">第一场开赛前可修改。</p></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-sky-500/15 text-sky-200">可提交</Pill>}</div><div className="space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="mb-2 block text-sm font-bold text-slate-300">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none placeholder:text-slate-500 disabled:opacity-50" /><div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="rounded-xl bg-slate-950 px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-3 font-black"><CheckCircle2 className="h-5 w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="rounded-2xl bg-slate-950 p-3 text-xs leading-relaxed text-slate-500">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">朋友趣味预测</h3><p className="text-sm text-slate-400">锁定前隐藏他人选择，避免互相抄答案。</p></div><Pill className="bg-slate-800 text-slate-300">{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-3 md:grid-cols-2">{players.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
+    <section className="mt-6 space-y-5"><Card><div className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><Pill className="mb-3"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</Pill><h2 className="text-3xl font-black tracking-tight">趣味预测栏</h2></div><div className="md3-panel-strong p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">锁定时间</div><div className="mt-1 text-lg font-black">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-5 lg:grid-cols-[420px_1fr]"><Card className={CARD_TONE.tonal}><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">我的趣味预测</h3></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}</div><div className="space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="md3-label">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="md3-field text-sm disabled:opacity-50" /><div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="md3-panel-inset px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-3 font-black"><CheckCircle2 className="h-5 w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="md3-panel-inset p-3 text-xs leading-relaxed text-slate-500">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card className={CARD_TONE.default}><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">朋友趣味预测</h3></div><Pill>{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-3 md:grid-cols-2">{players.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
   );
 }
 
 function FunInput({ label, value, disabled, onChange, placeholder }) {
-  return <div><label className="mb-2 block text-sm font-bold text-slate-300">{label}</label><input value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none placeholder:text-slate-500 disabled:opacity-50" /></div>;
+  return <div><label className="md3-label">{label}</label><input value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="md3-field text-sm disabled:opacity-50" /></div>;
 }
 
 function FunPredictionPlayerCard({ player, prediction, isMe, canShow, awards }) {
-  return <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><UserBadge player={player} /><div><div className="font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-5 w-5 text-emerald-200" /> : <XCircle className="h-5 w-5 text-slate-600" />}</div>{canShow ? <div className="space-y-2 text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-2 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="rounded-xl bg-slate-900 px-3 py-5 text-center text-sm text-slate-500">第一场开赛后公开</div>}</div>;
+  return <div className="md3-card md3-card-tone-highlight p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><UserBadge player={player} /><div><div className="font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-5 w-5 text-emerald-200" /> : <XCircle className="h-5 w-5 text-slate-600" />}</div>{canShow ? <div className="space-y-2 text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-2 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="md3-panel-inset px-3 py-5 text-center text-sm text-slate-500">第一场开赛后公开</div>}</div>;
 }
 
 function InfoRow({ label, value }) {
-  return <div className="flex items-center justify-between rounded-xl bg-slate-900 px-3 py-2"><span className="text-slate-500">{label}</span><span className="font-black">{value}</span></div>;
+  return <div className="md3-panel-inset flex items-center justify-between px-3 py-2"><span className="text-slate-500">{label}</span><span className="font-black">{value}</span></div>;
 }
 
 function PredictionHistoryList({ items }) {
   return <div className="space-y-3">
     {items.length ? items.map(({ prediction, match, points }) => (
-      <div key={prediction.id} className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
+      <div key={prediction.id} className="md3-panel p-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
-          <Pill className="bg-indigo-500/15 text-indigo-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
+          <Pill>#{match.no}</Pill>
+          <Pill className="bg-emerald-500/15 text-emerald-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
           {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
         </div>
         <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
         <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
         <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
       </div>
-    )) : <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
+    )) : <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
   </div>;
 }
 
@@ -2404,7 +2835,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
           <h3 className="text-xl font-black">赛后趣味称号结算</h3>
           <p className="text-sm text-slate-400">管理员填写最终结果后，点击结算按钮才会更新趣味预测页里的称号。</p>
         </div>
-        <Pill className="bg-slate-800 text-slate-300">管理员结算</Pill>
+        <Pill>管理员结算</Pill>
       </div>
       <div className="grid gap-3 md:grid-cols-4">
         {[["champion", "实际冠军"], ["goldenBoot", "实际金靴"], ["firstRedCardTeam", "首张红牌球队"], ["totalGoals", "实际总进球数"]].map(([key, placeholder]) => (
@@ -2415,7 +2846,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
             value={draftResults[key]}
             onChange={(e) => setDraftResults((prev) => ({ ...prev, [key]: e.target.value }))}
             placeholder={placeholder}
-            className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none placeholder:text-slate-500"
+            className="md3-field text-sm"
           />
         ))}
       </div>
@@ -2426,7 +2857,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, campBattleSummary, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, campBattleSummary, themeMode, onChangeTheme, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
@@ -2487,7 +2918,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
           <div className="flex items-start gap-4">
             <div>
               {isOwnProfile ? (
-                <button type="button" onClick={() => setAvatarEditorOpen((open) => !open)} className="rounded-xl outline-none ring-cyan-300 transition hover:scale-105 focus-visible:ring-2" aria-label="修改头像">
+                <button type="button" onClick={() => setAvatarEditorOpen((open) => !open)} className="rounded-xl outline-none ring-emerald-300 transition hover:scale-105 focus-visible:ring-2" aria-label="修改头像">
                   <UserBadge player={player} size="h-16 w-16" text="text-xl" />
                 </button>
               ) : (
@@ -2496,35 +2927,46 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
             </div>
             <div>
               <h2 className="text-3xl font-black">{player.name} 的个人主页</h2>
-              <p className="mt-1 text-sm text-slate-400">查看个人竞猜表现、称号和历史记录。</p>
               {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以编辑你的昵称和 emoji 头像。</p>}
             </div>
           </div>
           <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回竞猜排行榜</DarkButton>
         </div>
         {isOwnProfile && avatarEditorOpen && (
-          <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950 p-4">
+          <div className="md3-panel mt-5 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h3 className="font-black">编辑个人资料</h3>
                 <p className="text-xs text-slate-500">修改昵称或头像后点击保存，排行榜和朋友预测里会同步更新。</p>
               </div>
-              <Pill className="bg-slate-800 text-slate-300">{draftAvatarEmoji}</Pill>
+              <Pill>{draftAvatarEmoji}</Pill>
             </div>
             <label className="mb-4 block">
-              <span className="mb-2 block text-sm font-bold text-slate-300">个人昵称</span>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3">
+              <span className="md3-label">个人昵称</span>
+              <div className="md3-panel-inset flex items-center gap-2 px-4 py-3">
                 <User className="h-4 w-4 text-slate-500" />
                 <input value={draftUsername} onChange={(event) => setDraftUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-500" placeholder="例如 Oscar" />
               </div>
               {!cleanDraftUsername && <div className="mt-2 text-xs text-rose-300">昵称不能为空。</div>}
             </label>
-            <div className="mb-2 text-sm font-bold text-slate-300">选择 emoji 头像</div>
+            <div className="md3-label mb-2">选择 emoji 头像</div>
             <EmojiPicker value={draftAvatarEmoji} onChange={setDraftAvatarEmoji} disabled={savingAvatar} />
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button disabled={savingAvatar || !cleanDraftUsername || !profileChanged} onClick={saveProfile} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">{savingAvatar ? "保存中..." : "保存资料"}</button>
               <DarkButton disabled={savingAvatar} onClick={() => { setDraftUsername(player.name || ""); setDraftAvatarEmoji(player.avatarEmoji || DEFAULT_AVATAR_EMOJI); setAvatarEditorOpen(false); }} className="px-4 py-2 text-sm font-black">取消</DarkButton>
             </div>
+          </div>
+        )}
+        {isOwnProfile && (
+          <div className="md3-panel mt-5 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-black">外观设置</h3>
+                <p className="text-xs text-slate-500">默认是深色模式，颜色偏好会保存在当前浏览器。</p>
+              </div>
+              <Pill>颜色模式</Pill>
+            </div>
+            <ThemeToggle themeMode={themeMode} onChange={onChangeTheme} />
           </div>
         )}
       </Card>
@@ -2536,34 +2978,33 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         <StatCard icon={Flame} label="最高连胜" value={`${maxStreak}场`} sub="连续命中胜平负" />
       </div>
 
-      <Card className={playerCamp ? `${playerCamp.card} ${playerCamp.glow}` : ""}>
+      <Card className={playerCamp ? `${playerCamp.card} ${playerCamp.glow}` : CARD_TONE.default}>
         <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
           <div>
             <h3 className="text-xl font-black">阵营贡献</h3>
-            <p className="text-sm text-slate-400">阵营赛独立统计，不会影响个人主榜积分。</p>
           </div>
-          <Pill className={playerCamp ? playerCamp.pill : "bg-slate-800 text-slate-300"}>{getCampDisplayName(player.campId)}</Pill>
+          <Pill className={playerCamp ? playerCamp.pill : ""}>{getCampDisplayName(player.campId)}</Pill>
         </div>
         {playerCamp && campStats ? (
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-2xl bg-slate-950/70 p-4">
+            <div className="md3-panel-inset p-4">
               <div className="text-sm text-slate-400">阵营内总分排名</div>
               <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{campRank + 1}</div>
               <div className="mt-1 text-xs text-slate-500">共 {campStats.memberCount} 人</div>
             </div>
-            <div className="rounded-2xl bg-slate-950/70 p-4">
+            <div className="md3-panel-inset p-4">
               <div className="text-sm text-slate-400">阵营内完全比分排名</div>
               <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{exactCampRank + 1}</div>
               <div className="mt-1 text-xs text-slate-500">命中 {ranking.exactCount || 0} 次</div>
             </div>
-            <div className="rounded-2xl bg-slate-950/70 p-4">
+            <div className="md3-panel-inset p-4">
               <div className="text-sm text-slate-400">对阵营贡献</div>
               <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>{ranking.total || 0}分</div>
               <div className="mt-1 text-xs text-slate-500">占阵营总分 {campStats.total ? `${Math.round(((ranking.total || 0) / campStats.total) * 100)}%` : "0%"}</div>
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">管理员还没有把这位玩家分配到阵营。</div>
+          <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">管理员还没有把这位玩家分配到阵营。</div>
         )}
       </Card>
 
@@ -2579,17 +3020,16 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         </Card>
         <Card className="lg:col-span-2">
           <h3 className="mb-4 text-xl font-black">目前获得的称号</h3>
-          {titles.length ? <div className="flex flex-wrap gap-2">{titles.map((title) => <Pill key={title} className="bg-yellow-500/15 text-yellow-200">{title}</Pill>)}</div> : <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">暂未获得称号</div>}
+          {titles.length ? <div className="flex flex-wrap gap-2">{titles.map((title) => <Pill key={title} className="bg-yellow-500/15 text-yellow-200">{title}</Pill>)}</div> : <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">暂未获得称号</div>}
         </Card>
       </div>
 
       <Card>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <button type="button" onClick={() => onOpenAchievements?.()} className="text-left"><h3 className="text-xl font-black transition hover:text-cyan-200">成就信息</h3></button>
-            <p className="text-sm text-slate-400">点击查看完整成就墙和全部成就进度。</p>
+            <button type="button" onClick={() => onOpenAchievements?.()} className="text-left"><h3 className="text-xl font-black transition hover:text-emerald-200">成就信息</h3></button>
           </div>
-          <Pill className="bg-slate-800 text-slate-300">{playerUnlockedAchievements.length}/{ACHIEVEMENT_DEFINITIONS.length}</Pill>
+          <Pill>{playerUnlockedAchievements.length}/{ACHIEVEMENT_DEFINITIONS.length}</Pill>
         </div>
         <div className="space-y-4">
           <CompactAchievementSection title="最近获得成就" items={recentUnlockedAchievements} emptyText="该玩家暂未获得成就" />
@@ -2599,24 +3039,23 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
       <Card>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <button type="button" onClick={() => onOpenFullHistory?.(player.id)} className="text-left"><h3 className="text-xl font-black transition hover:text-cyan-200">用户历史竞猜记录</h3></button>
-            <p className="text-sm text-slate-400">只展示最近 5 条已结算竞猜记录。</p>
+            <button type="button" onClick={() => onOpenFullHistory?.(player.id)} className="text-left"><h3 className="text-xl font-black transition hover:text-emerald-200">用户历史竞猜记录</h3></button>
           </div>
-          <Pill className="bg-slate-800 text-slate-300">{history.length} 条</Pill>
+          <Pill>{history.length} 条</Pill>
         </div>
         <div className="space-y-3">
           {recentHistory.length ? recentHistory.map(({ prediction, match, points }) => (
-            <div key={prediction.id} className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
+            <div key={prediction.id} className="md3-panel p-4">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
-                <Pill className="bg-indigo-500/15 text-indigo-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
+                <Pill>#{match.no}</Pill>
+                <Pill className="bg-emerald-500/15 text-emerald-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
                 {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
               </div>
               <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
               <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
               <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
             </div>
-          )) : <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
+          )) : <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
         </div>
       </Card>
     </section>
@@ -2624,7 +3063,6 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
 }
 
 function AchievementsPanel({ players, currentPlayerId, achievementCollections }) {
-  const currentPlayer = players.find((player) => player.id === currentPlayerId) || players[0];
   const [rarityFilter, setRarityFilter] = useState("全部");
   const achievementStats = achievementCollections?.currentPlayerItems || [];
   const unlocked = achievementStats.filter((item) => item.currentPlayerProgress.achieved);
@@ -2639,18 +3077,17 @@ function AchievementsPanel({ players, currentPlayerId, achievementCollections })
   const filteredHidden = filteredItems.filter((item) => !item.currentPlayerProgress.achieved && item.achievement.hidden);
 
   return (
-    <section className="mt-6 space-y-5">
+    <section className="space-y-5">
       <Card>
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300"><Crown className="h-3.5 w-3.5" /> 成就墙 · 我的成就</div>
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 82%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}><Crown className="h-3.5 w-3.5" /> 成就墙 · 我的成就</div>
             <h2 className="text-3xl font-black tracking-tight">成就墙</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">这里只显示当前玩家自己的成就状态。隐藏成就未解锁前会以占位卡片展示，解锁后统一切换为钻石风格。</p>
           </div>
-          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-4 text-slate-100 shadow-xl">
-            <div className="text-xs font-bold text-slate-400">我的成就</div>
+          <div className="rounded-[24px] border p-4 shadow-xl" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 85%, transparent)" }}>
+            <div className="text-xs font-bold md3-subtle">我的成就</div>
             <div className="mt-1 text-3xl font-black">{unlocked.length}/{achievementCollections?.totalAchievements || ACHIEVEMENT_DEFINITIONS.length}</div>
-            <div className="mt-2 text-xs text-slate-400">未解锁隐藏成就 {hiddenLocked.length} 个</div>
+            <div className="mt-2 text-xs md3-subtle">未解锁隐藏成就 {hiddenLocked.length} 个</div>
           </div>
         </div>
       </Card>
@@ -2659,19 +3096,14 @@ function AchievementsPanel({ players, currentPlayerId, achievementCollections })
         <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <h3 className="text-xl font-black">成就筛选</h3>
-            <p className="text-sm text-slate-400">按稀有度筛选，同时保留已获得、即将达成和隐藏占位三种状态。</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {[ "全部", ...ACHIEVEMENT_RARITIES ].map((rarity) => (
-              <button key={rarity} type="button" onClick={() => setRarityFilter(rarity)} className={`rounded-full px-3 py-1.5 text-xs font-black transition ${rarityFilter === rarity ? "bg-cyan-600 text-cyan-50" : "bg-slate-900 text-slate-300 hover:bg-slate-800"}`}>{rarity}</button>
-            ))}
-          </div>
+          <M3SegmentedControl options={[ "全部", ...ACHIEVEMENT_RARITIES ].map((rarity) => ({ value: rarity, label: rarity }))} value={rarityFilter} onChange={setRarityFilter} size="sm" />
         </div>
       </Card>
 
-      <AchievementSection title="已获得成就" subtitle={`${currentPlayer?.name || "当前玩家"} 已经点亮的成就`} items={filteredUnlocked} emptyText="当前筛选下暂无已获得成就" />
-      <AchievementSection title="即将达成" subtitle="显示当前筛选下最接近解锁的公开成就" items={filteredUpcoming.sort((a, b) => (b.currentPlayerProgress.current / b.currentPlayerProgress.target) - (a.currentPlayerProgress.current / a.currentPlayerProgress.target))} emptyText="当前筛选下暂无公开未解锁成就" />
-      <AchievementSection title="隐藏成就" subtitle="未解锁前只展示占位卡片，解锁后会切换为钻石风格" items={filteredHidden} emptyText="当前筛选下暂无隐藏成就" />
+      <AchievementSection title="已获得成就" items={filteredUnlocked} emptyText="当前筛选下暂无已获得成就" />
+      <AchievementSection title="即将达成" items={filteredUpcoming.sort((a, b) => (b.currentPlayerProgress.current / b.currentPlayerProgress.target) - (a.currentPlayerProgress.current / a.currentPlayerProgress.target))} emptyText="当前筛选下暂无公开未解锁成就" />
+      <AchievementSection title="隐藏成就" items={filteredHidden} emptyText="当前筛选下暂无隐藏成就" />
     </section>
   );
 }
@@ -2682,11 +3114,11 @@ function AchievementSection({ title, subtitle, items, emptyText }) {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-black">{title}</h3>
-          <p className="text-sm text-slate-400">{subtitle}</p>
+          {subtitle ? <p className="text-sm text-slate-400">{subtitle}</p> : null}
         </div>
         <Pill className="bg-slate-800 text-slate-300">{items.length} 个</Pill>
       </div>
-      {items.length ? <div className="grid gap-4 xl:grid-cols-2">{items.map((item) => <AchievementCard key={`${title}-${item.achievement.id}`} {...item} />)}</div> : <div className="rounded-2xl border border-slate-700 bg-slate-950 p-5 text-center text-sm text-slate-500">{emptyText}</div>}
+      {items.length ? <div className="grid gap-4 xl:grid-cols-2">{items.map((item) => <AchievementCard key={`${title}-${item.achievement.id}`} {...item} />)}</div> : <EmptyState icon={Star} title={emptyText} description="换个筛选或者继续竞猜，成就会慢慢点亮。" />}
     </Card>
   );
 }
@@ -2698,7 +3130,7 @@ function CompactAchievementSection({ title, items, emptyText }) {
         <h4 className="font-black">{title}</h4>
         <Pill className="bg-slate-800 text-slate-300">{items.length} 个</Pill>
       </div>
-      {items.length ? <div className="grid gap-3 md:grid-cols-2">{items.map((item) => <AchievementCard key={`${title}-${item.achievement.id}`} {...item} compact />)}</div> : <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-center text-sm text-slate-500">{emptyText}</div>}
+      {items.length ? <div className="grid gap-3 md:grid-cols-2">{items.map((item) => <AchievementCard key={`${title}-${item.achievement.id}`} {...item} compact />)}</div> : <EmptyState icon={Star} title={emptyText} description="成就获得后会出现在这里。" />}
     </div>
   );
 }
@@ -2725,69 +3157,176 @@ function AchievementCard({ achievement, roomAchievedCount, roomTotalPlayers, cur
           <p className="mt-1 text-sm text-slate-300/90">{description}</p>
         </div>
       </div>
-      <div className="mt-4 grid gap-2 rounded-2xl bg-slate-900/80 px-3 py-3 text-sm">
+      <div className="mt-4 grid gap-2 rounded-[20px] px-3 py-3 text-sm" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 82%, transparent)" }}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-slate-500">获得时间</span>
-          <span className={achieved ? `font-black ${theme.accent}` : "font-black text-slate-500"}>{formatAchievementTime(currentPlayerProgress.achievedAt)}</span>
+          <span className="md3-subtle">获得时间</span>
+          <span className={achieved ? `font-black ${theme.accent}` : "font-black md3-subtle"}>{formatAchievementTime(currentPlayerProgress.achievedAt)}</span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-slate-500">获得进度</span>
-          <span className={achieved ? `font-black ${theme.accent}` : "font-black text-slate-300"}>{currentPlayerProgress.current}/{currentPlayerProgress.target}</span>
+          <span className="md3-subtle">获得进度</span>
+          <span className={achieved ? `font-black ${theme.accent}` : "font-black"}>{currentPlayerProgress.current}/{currentPlayerProgress.target}</span>
         </div>
+        <M3Progress value={currentPlayerProgress.current} max={currentPlayerProgress.target} />
       </div>
     </div>
   );
 }
 
-function RankingPanel({ players, rankingTrend, predictionStyleRankings, streakRankings, reverseLightPlayer, dailyBestPlayers, rankings, currentPlayerId, settledCount, onOpenPlayerProfile }) {
-  return <section className="mt-6 space-y-5"><RankTrendChart players={players} rankingTrend={rankingTrend} /><PredictionStyleRankingsPanel predictionStyleRankings={predictionStyleRankings} /><FunRankingsPanel streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} /><ScoreRankingTable rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={onOpenPlayerProfile} /></section>;
+function RankingPanel({ players, rankingTrend, predictionStyleRankings, streakRankings, reverseLightPlayer, dailyBestPlayers, rankings, currentPlayerId, settledCount, onOpenPlayerProfile, matches, predictions }) {
+  const [rankingFilter, setRankingFilter] = useState("ALL");
+  const matchesById = useMemo(() => Object.fromEntries(matches.map((match) => [match.id, match])), [matches]);
+  const rankingFilters = [
+    { value: "ALL", label: "总榜" },
+    { value: "GROUP", label: "小组赛" },
+    { value: "KNOCKOUT", label: "淘汰赛" },
+    { value: "WEEK", label: "本周" },
+    { value: "FRIENDS", label: "好友榜" },
+  ];
+
+  const filteredRankings = useMemo(() => {
+    if (rankingFilter === "ALL" || rankingFilter === "FRIENDS") return rankings;
+    const now = Date.now();
+    return players.map((player) => {
+      const playerPredictions = predictions.filter((prediction) => prediction.playerId === player.id).filter((prediction) => {
+        const match = matches.find((item) => item.id === prediction.matchId);
+        if (!match || !isSettledMatch(match)) return false;
+        if (rankingFilter === "GROUP") return match.stage === "GROUP";
+        if (rankingFilter === "KNOCKOUT") return match.stage !== "GROUP";
+        if (rankingFilter === "WEEK") return now - new Date(match.kickoff).getTime() <= 7 * 24 * 60 * 60 * 1000;
+        return true;
+      });
+      return buildRankingStats(player, playerPredictions, matchesById);
+    }).sort(comparePlayers);
+  }, [rankingFilter, players, predictions, matchesById]);
+
+  return (
+    <section className="space-y-5">
+      <Card className="md3-filled-card">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <h2 className="md3-section-title text-[1.9rem]">竞猜积分榜</h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Pill>已结算 {settledCount} 场</Pill>
+            <Pill>{players.length} 位玩家</Pill>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <h3 className="md3-section-title text-[1.5rem]">榜单筛选</h3>
+          </div>
+          <M3SegmentedControl options={rankingFilters} value={rankingFilter} onChange={setRankingFilter} />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {filteredRankings.slice(0, 3).map((player, index) => (
+            <PodiumCard key={`${rankingFilter}-${player.id}`} player={player} place={index + 1} onClick={() => onOpenPlayerProfile(player.id)} />
+          ))}
+        </div>
+      </Card>
+
+      <RankTrendChart players={players} rankingTrend={rankingTrend} />
+      <PredictionStyleRankingsPanel predictionStyleRankings={predictionStyleRankings} />
+      <FunRankingsPanel streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} />
+      <ScoreRankingTable rankings={filteredRankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={onOpenPlayerProfile} />
+    </section>
+  );
 }
 
 function ScoreRankingTable({ rankings, currentPlayerId, settledCount, onOpenPlayerProfile }) {
-  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-xl font-black md:text-2xl">竞猜积分排行榜</h2><p className="text-sm text-slate-400">排序：总积分 ＞ 命中比分 ＞ 命中结果 ＞ 参与场次 ＞ 加入时间。点击玩家可查看个人主页。</p></div><Pill className="bg-slate-800 text-slate-100">已结算 {settledCount} 场</Pill></div><div className="overflow-x-auto rounded-2xl border border-slate-700"><table className="w-full min-w-[640px] text-left text-xs md:text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-3 py-3 md:px-4">排名</th><th className="px-3 py-3 md:px-4">玩家</th><th className="px-3 py-3 md:px-4">总积分</th><th className="px-3 py-3 md:px-4">完全比分</th><th className="px-3 py-3 md:px-4">命中结果</th><th className="px-3 py-3 md:px-4">参与场次</th></tr></thead><tbody>{rankings.map((player, index) => <tr key={player.id} className="border-t border-slate-700 bg-slate-950/60"><td className="px-3 py-3 text-base font-black md:px-4 md:py-4 md:text-lg">#{index + 1}</td><td className="px-3 py-3 md:px-4 md:py-4"><button onClick={() => onOpenPlayerProfile?.(player.id)} className="flex min-w-[180px] items-center gap-2 text-left md:gap-3"><UserBadge player={player} size="h-8 w-8 md:h-10 md:w-10" text="text-xs md:text-sm" /><div className="min-w-0"><div className="truncate text-sm font-black hover:text-cyan-200 md:text-base">{player.name}</div>{player.id === currentPlayerId && <div className="text-[11px] text-emerald-200 md:text-xs">当前玩家</div>}</div></button></td><td className="px-3 py-3 text-lg font-black md:px-4 md:py-4 md:text-2xl">{player.total}</td><td className="px-3 py-3 md:px-4 md:py-4">{player.exactCount}</td><td className="px-3 py-3 md:px-4 md:py-4">{player.outcomeCount}</td><td className="px-3 py-3 md:px-4 md:py-4">{player.played}</td></tr>)}</tbody></table></div></Card>;
+  return (
+    <Card>
+      <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div>
+          <h2 className="md3-section-title text-[1.6rem]">完整排名列表</h2>
+        </div>
+        <Pill>已结算 {settledCount} 场</Pill>
+      </div>
+      <div className="space-y-3">
+        {rankings.map((player, index) => {
+          const isCurrent = player.id === currentPlayerId;
+          return (
+            <button key={player.id} type="button" onClick={() => onOpenPlayerProfile?.(player.id)} className={cn("md3-card w-full text-left", isCurrent && "md3-filled-card")}>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="flex items-center gap-3 md:w-[280px]">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-[18px] font-black" style={{ background: index < 3 ? "color-mix(in srgb, var(--md-sys-color-secondary-container) 72%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)", color: index < 3 ? "var(--md-sys-color-on-secondary-container)" : "var(--md-sys-color-on-surface)" }}>
+                    #{index + 1}
+                  </div>
+                  <UserBadge player={player} size="h-11 w-11" text="text-sm" />
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-black">{player.name}</div>
+                    <div className="text-xs md3-subtle">{isCurrent ? "当前用户" : "点击查看个人主页"}</div>
+                  </div>
+                </div>
+                <div className="grid flex-1 gap-3 sm:grid-cols-4">
+                  <RankingMetric label="总积分" value={`${player.total} 分`} accent />
+                  <RankingMetric label="完全比分" value={`${player.exactCount} 次`} />
+                  <RankingMetric label="胜负+净胜球" value={`${player.netGoalOnlyCount} 次`} />
+                  <RankingMetric label="仅中胜负" value={`${player.outcomeOnlyCount} 次`} />
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
 }
 
-function MiniRankingCard({ title, subtitle, badge, players, valueLabel }) {
+function RankingMetric({ label, value, accent = false, trend = null }) {
+  return (
+    <div className="rounded-[20px] px-4 py-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 85%, transparent)" }}>
+      <div className="text-xs uppercase tracking-[0.16em] md3-subtle">{label}</div>
+      <div className={cn("mt-2 flex items-center gap-2 text-lg font-black", accent && "text-[color:var(--md-sys-color-primary)]")}>
+        {trend !== null ? (trend > 0 ? <ArrowUp className="h-4 w-4 text-emerald-500" /> : trend < 0 ? <ArrowDown className="h-4 w-4 text-rose-500" /> : <Target className="h-4 w-4 md3-subtle" />) : null}
+        <span>{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function MiniRankingCard({ title, badge, players, valueLabel }) {
   const leader = players?.[0];
   return (
-    <Card className="h-full overflow-hidden bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 shadow-[0_18px_60px_rgba(15,23,42,0.28)]">
+    <Card className="h-full overflow-hidden bg-[linear-gradient(160deg,rgba(10,25,17,0.98),rgba(13,33,22,0.96),rgba(17,42,29,0.94))] shadow-[0_18px_60px_rgba(6,78,59,0.24)]">
       <div className="mb-5 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-[1.65rem] font-black leading-tight tracking-tight text-slate-50">{title}</h3>
-          <p className="mt-2 max-w-[22ch] text-sm leading-6 text-slate-400">{subtitle}</p>
         </div>
-        <Pill className="shrink-0 bg-slate-800/90 px-3 py-1.5 text-center text-xs font-bold text-slate-200 shadow-inner shadow-slate-950/50">{badge}</Pill>
+        <Pill className="shrink-0 border border-emerald-800/40 bg-emerald-950/70 px-3 py-1.5 text-center text-xs font-bold text-emerald-100 shadow-inner shadow-emerald-950/40">{badge}</Pill>
       </div>
       {leader && leader.value > 0 ? (
         <div className="space-y-3">
-          <div className="rounded-[28px] border border-slate-700/80 bg-gradient-to-b from-slate-950 to-[#061126] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div className="rounded-[28px] border border-emerald-900/45 bg-[linear-gradient(180deg,rgba(8,22,15,0.98),rgba(11,36,24,0.96))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
             <div className="text-center text-xs tracking-[0.2em] text-slate-500">当前第 1 名</div>
-            <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-4 shadow-inner shadow-black/20">
+            <div className="mt-3 rounded-2xl border border-emerald-900/35 bg-emerald-950/55 px-4 py-4 shadow-inner shadow-black/20">
               <UserNameOnly player={leader} mono wrap className="mx-auto max-w-[20ch] text-center text-lg leading-6 md:text-[1.35rem] md:leading-7" />
             </div>
-            <div className="mt-3 rounded-2xl bg-slate-900/90 px-3 py-2 text-center text-sm text-slate-400">
-              {valueLabel} <span className="font-black text-slate-100">{leader.value}</span> 次
+            <div className="mt-3 rounded-2xl bg-emerald-950/70 px-3 py-2 text-center text-sm text-emerald-100/75">
+              {valueLabel} <span className="font-black text-emerald-50">{leader.value}</span> 次
             </div>
           </div>
           <div className="space-y-2">
             {players.slice(0, 5).map((player, index) => (
-              <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-800/65 px-3 py-3 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-                <span className="shrink-0 rounded-xl bg-slate-900 px-2 py-1 font-bold text-slate-300">#{index + 1}</span>
+              <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-emerald-900/30 bg-emerald-950/45 px-3 py-3 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <span className="shrink-0 rounded-xl bg-emerald-950/80 px-2 py-1 font-bold text-emerald-100/70">#{index + 1}</span>
                 <UserNameOnly player={player} mono wrap className="flex-1 text-sm leading-5 text-slate-100" />
-                <span className="shrink-0 rounded-xl bg-slate-950 px-2.5 py-1 font-black text-slate-100">{player.value}</span>
+                <span className="shrink-0 rounded-xl bg-emerald-950 px-2.5 py-1 font-black text-emerald-50">{player.value}</span>
               </div>
             ))}
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无有效数据</div>
+        <div className="rounded-2xl bg-emerald-950/45 p-5 text-center text-slate-500">暂无有效数据</div>
       )}
     </Card>
   );
 }
 
 function PredictionStyleRankingsPanel({ predictionStyleRankings }) {
-  return <div><div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">预测风格榜</h2><p className="text-sm text-slate-400">这些榜单不改变积分，只记录玩家的竞猜风格和名场面。</p></div><Pill className="bg-slate-800 text-slate-100">趣味统计</Pill></div><div className="grid gap-5 md:grid-cols-2"><MiniRankingCard title="精准狙击榜" subtitle="完全猜中比分次数最多。" badge="精准狙击手" players={predictionStyleRankings.exactSnipers} valueLabel="完全比分" /><MiniRankingCard title="稳健大师榜" subtitle="猜中胜平负次数最多。" badge="稳健大师" players={predictionStyleRankings.steadyMasters} valueLabel="命中结果" /><MiniRankingCard title="保守大师榜" subtitle="预测打平比分次数最多。" badge="保守大师" players={predictionStyleRankings.conservativeMasters} valueLabel="预测平局" /><MiniRankingCard title="进攻狂魔榜" subtitle="预测单场总进球 ≥ 4 次数最多。" badge="进攻狂魔" players={predictionStyleRankings.attackingMadmen} valueLabel="大比分预测" /></div></div>;
+  return <div><div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">预测风格榜</h2></div><Pill className="bg-emerald-500/15 text-emerald-200">趣味统计</Pill></div><div className="grid gap-5 md:grid-cols-2"><MiniRankingCard title="精准狙击榜" badge="精准狙击手" players={predictionStyleRankings.exactSnipers} valueLabel="完全比分" /><MiniRankingCard title="稳健大师榜" badge="稳健大师" players={predictionStyleRankings.steadyMasters} valueLabel="命中结果" /><MiniRankingCard title="保守大师榜" badge="保守大师" players={predictionStyleRankings.conservativeMasters} valueLabel="预测平局" /><MiniRankingCard title="进攻狂魔榜" badge="进攻狂魔" players={predictionStyleRankings.attackingMadmen} valueLabel="大比分预测" /></div></div>;
 }
 
 function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers }) {
@@ -2797,16 +3336,15 @@ function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-xl font-black">最高连胜排名</h3>
-            <p className="text-sm text-slate-400">连续猜中胜平负即计入连胜。</p>
           </div>
           <Pill className="shrink-0 bg-yellow-500/15 text-yellow-200">大预言家</Pill>
         </div>
         <div className="space-y-3">
           {streakRankings.slice(0, 5).map((player, index) => (
-            <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-800/60 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+            <div key={player.id} className="flex items-center gap-3 rounded-2xl border border-emerald-900/30 bg-emerald-950/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="shrink-0 font-bold text-slate-300">#{index + 1}</span>
+                  <span className="shrink-0 font-bold text-emerald-100/70">#{index + 1}</span>
                   <UserNameOnly player={player} mono wrap className="text-base leading-5" />
                 </div>
                 {index === 0 && <div className="mt-1 text-xs text-yellow-200">称号：大预言家</div>}
@@ -2820,48 +3358,46 @@ function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-xl font-black">反向明灯榜</h3>
-            <p className="text-sm text-slate-400">当前总分最低的玩家。</p>
           </div>
           <Pill className="shrink-0 bg-rose-500/15 text-rose-200">毒奶之王</Pill>
         </div>
         {reverseLightPlayer ? (
           <div className="rounded-3xl border border-rose-300/20 bg-gradient-to-br from-rose-500/10 to-fuchsia-500/10 p-5 shadow-[0_18px_60px_rgba(88,28,135,0.18)]">
-            <div className="rounded-2xl bg-slate-950/50 px-4 py-4">
+            <div className="rounded-2xl bg-emerald-950/45 px-4 py-4">
               <UserNameOnly player={reverseLightPlayer} mono wrap className="mx-auto max-w-[20ch] text-center text-lg leading-6 md:text-[1.5rem] md:leading-8" />
             </div>
             <div className="mt-3 text-center text-sm text-rose-100">称号：毒奶之王</div>
-            <div className="mt-4 rounded-2xl bg-slate-950 p-3 text-center text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div>
+            <div className="mt-4 rounded-2xl bg-emerald-950/70 p-3 text-center text-sm text-slate-400">当前总分 {reverseLightPlayer.total} 分 · 参与 {reverseLightPlayer.played} 场</div>
           </div>
         ) : (
-          <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">暂无数据</div>
+          <div className="rounded-2xl bg-emerald-950/45 p-5 text-center text-slate-500">暂无数据</div>
         )}
       </Card>
       <Card>
         <div className="mb-4">
           <h3 className="text-xl font-black">每日最佳玩家</h3>
-          <p className="text-sm text-slate-400">仅显示最近 3 个比赛日的得分最高玩家。</p>
         </div>
         <div className="max-h-[420px] space-y-3 overflow-auto pr-1">
           {dailyBestPlayers.length ? dailyBestPlayers.map((day) => (
-            <div key={day.date} className="rounded-2xl bg-slate-800/60 p-3">
+            <div key={day.date} className="rounded-2xl border border-emerald-900/25 bg-emerald-950/40 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="font-black">{day.date}</div>
-                <Pill className="bg-slate-900 text-slate-300">{day.matchCount}场</Pill>
+                <Pill className="bg-emerald-950/80 text-emerald-100/75">{day.matchCount}场</Pill>
               </div>
               {day.winners.length ? (
                 <div className="space-y-2">
                   {day.winners.slice(0, 5).map((player) => (
-                    <div key={player.id} className="flex items-center gap-3 rounded-xl bg-slate-950 px-3 py-2.5">
+                    <div key={player.id} className="flex items-center gap-3 rounded-xl bg-emerald-950/70 px-3 py-2.5">
                       <UserNameOnly player={player} mono wrap className="flex-1 text-sm leading-5" />
                       <span className="shrink-0 text-lg font-black">{day.topScore}分</span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>
+                <div className="rounded-xl bg-emerald-950/70 px-3 py-2 text-sm text-slate-500">当日暂无得分</div>
               )}
             </div>
-          )) : <div className="rounded-2xl bg-slate-800/60 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}
+          )) : <div className="rounded-2xl bg-emerald-950/45 p-5 text-center text-slate-500">结算比赛后自动记录每日最佳。</div>}
         </div>
       </Card>
     </div>
@@ -2869,14 +3405,14 @@ function FunRankingsPanel({ streakRankings, reverseLightPlayer, dailyBestPlayers
 }
 
 function RankTrendChart({ players, rankingTrend }) {
-  if (!rankingTrend.length) return <Card><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="mt-1 text-sm text-slate-400">还没有已结算比赛，结算后这里会自动生成积分折线图。</p></div><Pill className="bg-slate-800 text-slate-300">等待结算</Pill></div></Card>;
+  if (!rankingTrend.length) return <Card><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-2xl font-black">排名变化趋势</h2></div><Pill className="bg-emerald-950/70 text-emerald-100/75">等待结算</Pill></div></Card>;
   const lineColors = ["#fbbf24", "#60a5fa", "#34d399", "#fb7185", "#a78bfa", "#f97316", "#22d3ee", "#e879f9"];
-  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2><p className="text-sm text-slate-400">每结算一场比赛后自动刷新。纵轴显示玩家累计积分。</p></div><Pill className="bg-slate-800 text-slate-100">实时更新</Pill></div><div className="h-80 rounded-2xl border border-slate-700 bg-slate-950 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(15,23,42,0.96)", border: "1px solid rgba(148,163,184,0.35)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={player.name} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
+  return <Card><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><h2 className="text-2xl font-black">排名变化趋势</h2></div><Pill className="bg-emerald-500/15 text-emerald-200">实时更新</Pill></div><div className="h-80 rounded-2xl border border-emerald-900/35 bg-emerald-950/45 p-3"><ResponsiveContainer width="100%" height="100%"><LineChart data={rankingTrend} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(110,231,183,0.14)" /><XAxis dataKey="label" stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} /><YAxis allowDecimals={false} domain={[0, "auto"]} stroke="rgba(203,213,225,0.7)" tick={{ fill: "rgba(203,213,225,0.7)", fontSize: 12 }} tickFormatter={(value) => `${value}分`} /><Tooltip contentStyle={{ background: "rgba(7,20,14,0.96)", border: "1px solid rgba(52,211,153,0.22)", borderRadius: 16, color: "white" }} labelStyle={{ color: "white", fontWeight: 800 }} formatter={(value, name) => [`${value}分`, name]} labelFormatter={(label, payload) => { const item = payload?.[0]?.payload; return item?.match ? `${label} · ${item.match}` : label; }} /><Legend wrapperStyle={{ color: "rgba(203,213,225,0.8)", fontSize: 12 }} />{players.map((player, index) => <Line key={player.id} type="monotone" dataKey={player.id} name={player.name} stroke={lineColors[index % lineColors.length]} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />)}</LineChart></ResponsiveContainer></div></Card>;
 }
 
 function CampBadge({ campId, className = "" }) {
   const meta = getCampMeta(campId);
-  return <Pill className={`${meta ? meta.pill : "bg-slate-800 text-slate-300"} ${className}`}>{getCampDisplayName(campId)}</Pill>;
+  return <Pill className={`${meta ? meta.pill : ""} ${className}`}>{getCampDisplayName(campId)}</Pill>;
 }
 
 function CampBattlePanel({ campBattleSummary, settledCount }) {
@@ -2890,11 +3426,10 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2 className="text-3xl font-black">阵营对抗赛</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">阵营赛独立于个人主榜，重点比较平均分、整体火力和阵容深度，适合 18 vs 12 这种不均衡人数的团体对抗。</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Pill className="bg-slate-800 text-slate-300">已结算 {settledCount} 场</Pill>
-            <Pill className={leaderMeta ? leaderMeta.pill : "bg-slate-800 text-slate-300"}>{leaderMeta ? `${leaderMeta.name} 暂时领先` : "暂未分出领先方"}</Pill>
+            <Pill>已结算 {settledCount} 场</Pill>
+            <Pill className={leaderMeta ? leaderMeta.pill : ""}>{leaderMeta ? `${leaderMeta.name} 暂时领先` : "暂未分出领先方"}</Pill>
           </div>
         </div>
       </Card>
@@ -2934,9 +3469,8 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
             <h3 className="text-2xl font-black">核心对抗记分板</h3>
-            <p className="text-sm text-slate-400">先看平均分，再看总分与命中能力。平均分差目前为 {formatCampDiff(campBattleSummary.averageGap)} 分。</p>
           </div>
-          <Pill className="bg-slate-800 text-slate-300">6 项对抗</Pill>
+          <Pill>6 项对抗</Pill>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           {campBattleSummary.metricDuels.map((duel) => <CampDuelCard key={duel.id} duel={duel} />)}
@@ -2953,16 +3487,15 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h3 className="text-2xl font-black">趣味荣誉区</h3>
-              <p className="text-sm text-slate-400">只做展示，不影响任何个人积分。</p>
             </div>
-            <Pill className="bg-slate-800 text-slate-300">荣誉玩法</Pill>
+            <Pill>荣誉玩法</Pill>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <HonorCard title="头号选手" value={leftCamp.topPlayer ? `${leftCamp.topPlayer.name} / ${leftCamp.topPlayer.total}分` : "待组队"} badge={leftCamp.meta.name} badgeClass={leftCamp.meta.pill} />
             <HonorCard title="头号选手" value={rightCamp.topPlayer ? `${rightCamp.topPlayer.name} / ${rightCamp.topPlayer.total}分` : "待组队"} badge={rightCamp.meta.name} badgeClass={rightCamp.meta.pill} />
             <HonorCard title="拖分王" value={leftCamp.bottomPlayer ? `${leftCamp.bottomPlayer.name} / ${leftCamp.bottomPlayer.total}分` : "待组队"} badge={leftCamp.meta.name} badgeClass={leftCamp.meta.pill} />
             <HonorCard title="拖分王" value={rightCamp.bottomPlayer ? `${rightCamp.bottomPlayer.name} / ${rightCamp.bottomPlayer.total}分` : "待组队"} badge={rightCamp.meta.name} badgeClass={rightCamp.meta.pill} />
-            <HonorCard title="MVP归属" value={campBattleSummary.latestMatchBattle?.mvp ? `${campBattleSummary.latestMatchBattle.mvp.player.name} · ${campBattleSummary.latestMatchBattle.mvp.points}分` : "最近暂无单场MVP"} badge={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.name : "等待结算"} badgeClass={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.pill : "bg-slate-800 text-slate-300"} />
+            <HonorCard title="MVP归属" value={campBattleSummary.latestMatchBattle?.mvp ? `${campBattleSummary.latestMatchBattle.mvp.player.name} · ${campBattleSummary.latestMatchBattle.mvp.points}分` : "最近暂无单场MVP"} badge={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.name : "等待结算"} badgeClass={campBattleSummary.latestMatchBattle?.mvp?.player?.campId ? getCampMeta(campBattleSummary.latestMatchBattle.mvp.player.campId)?.pill : ""} />
             <HonorCard title="毒奶阵营" value={campBattleSummary.lowestAverageCampId ? `${getCampMeta(campBattleSummary.lowestAverageCampId)?.name} 当前平均分更低` : "双方暂时打平"} badge="轻松调侃" badgeClass="bg-fuchsia-500/15 text-fuchsia-200" />
           </div>
         </Card>
@@ -2971,9 +3504,8 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h3 className="text-2xl font-black">最近战况</h3>
-              <p className="text-sm text-slate-400">分别看最近 3 场与最近 3 个比赛日的阵营战报。</p>
             </div>
-            <Pill className="bg-slate-800 text-slate-300">即时刷新</Pill>
+            <Pill>即时刷新</Pill>
           </div>
           <div className="space-y-4">
             <BattleFeed title="最近 3 场" battles={campBattleSummary.recentMatchBattles} />
@@ -2986,27 +3518,26 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
 }
 
 function StatTile({ label, value }) {
-  return <div className="rounded-2xl bg-slate-950/70 p-4"><div className="text-sm text-slate-400">{label}</div><div className="mt-2 text-2xl font-black">{value}</div></div>;
+  return <div className="md3-panel-inset p-4"><div className="text-sm text-slate-400">{label}</div><div className="mt-2 text-2xl font-black">{value}</div></div>;
 }
 
 function CampDuelCard({ duel }) {
   const winnerMeta = getCampMeta(duel.winner);
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+    <div className="md3-panel p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h4 className="font-black">{duel.title}</h4>
-          <p className="text-xs text-slate-500">{duel.description}</p>
         </div>
-        <Pill className={winnerMeta ? winnerMeta.pill : "bg-slate-800 text-slate-300"}>{winnerMeta ? `${winnerMeta.name} 领先` : "双方打平"}</Pill>
+        <Pill className={winnerMeta ? winnerMeta.pill : ""}>{winnerMeta ? `${winnerMeta.name} 领先` : "双方打平"}</Pill>
       </div>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-        <div className="rounded-2xl bg-slate-900 px-4 py-4 text-center">
+        <div className="md3-panel-inset px-4 py-4 text-center">
           <div className="text-xs text-slate-500">{CAMP_CONFIG.A.name}</div>
           <div className="mt-2 text-2xl font-black text-rose-100">{duel.formatter(duel.leftValue)}</div>
         </div>
         <div className="text-sm font-bold text-slate-500">VS</div>
-        <div className="rounded-2xl bg-slate-900 px-4 py-4 text-center">
+        <div className="md3-panel-inset px-4 py-4 text-center">
           <div className="text-xs text-slate-500">{CAMP_CONFIG.B.name}</div>
           <div className="mt-2 text-2xl font-black text-sky-100">{duel.formatter(duel.rightValue)}</div>
         </div>
@@ -3021,15 +3552,14 @@ function CampMembersCard({ camp }) {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-2xl font-black">{camp.meta.name} 成员榜</h3>
-          <p className="text-sm text-slate-400">按当前个人积分降序排序。</p>
         </div>
         <CampBadge campId={camp.campId} />
       </div>
-      {camp.members.length ? (
+          {camp.members.length ? (
         <div className="space-y-3">
           {camp.members.map((member, index) => (
-            <div key={member.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl bg-slate-950/75 px-3 py-3">
-              <span className="rounded-xl bg-slate-900 px-2 py-1 text-xs font-bold text-slate-300">#{index + 1}</span>
+            <div key={member.id} className="md3-panel-inset grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-3">
+              <span className="rounded-xl bg-black/10 px-2 py-1 text-xs font-bold text-slate-300">#{index + 1}</span>
               <div className="min-w-0">
                 <UserNameOnly player={member} className="text-sm" />
                 <div className="text-xs text-slate-500">完全比分 {member.exactCount} 次 · 命中结果 {member.outcomeCount} 次</div>
@@ -3042,14 +3572,14 @@ function CampMembersCard({ camp }) {
           ))}
         </div>
       ) : (
-        <div className="rounded-2xl bg-slate-950 p-5 text-center text-sm text-slate-500">这个阵营暂时还没有成员。</div>
+        <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">这个阵营暂时还没有成员。</div>
       )}
     </Card>
   );
 }
 
 function HonorCard({ title, value, badge, badgeClass }) {
-  return <div className="rounded-2xl bg-slate-950/70 p-4"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{title}</div><Pill className={badgeClass}>{badge}</Pill></div><div className="text-sm leading-6 text-slate-300">{value}</div></div>;
+  return <div className="md3-panel-inset p-4"><div className="mb-2 flex items-center justify-between gap-3"><div className="font-black">{title}</div><Pill className={badgeClass}>{badge}</Pill></div><div className="text-sm leading-6 text-slate-300">{value}</div></div>;
 }
 
 function BattleFeed({ title, battles }) {
@@ -3060,16 +3590,16 @@ function BattleFeed({ title, battles }) {
         {battles.length ? battles.map((battle) => {
           const winnerMeta = getCampMeta(battle.winner);
           return (
-            <div key={battle.key} className="rounded-2xl bg-slate-950/70 px-4 py-3">
+            <div key={battle.key} className="md3-panel-inset px-4 py-3">
               <div className="mb-1 flex items-center justify-between gap-3">
                 <div className="font-black">{battle.label}</div>
-                <Pill className={winnerMeta ? winnerMeta.pill : "bg-slate-800 text-slate-300"}>{winnerMeta ? `${winnerMeta.name} 胜` : "双方战平"}</Pill>
+                <Pill className={winnerMeta ? winnerMeta.pill : ""}>{winnerMeta ? `${winnerMeta.name} 胜` : "双方战平"}</Pill>
               </div>
               <div className="text-sm text-slate-400">{battle.sublabel}</div>
               <div className="mt-2 text-sm text-slate-300">{CAMP_CONFIG.A.name} {battle.leftValue} : {battle.rightValue} {CAMP_CONFIG.B.name}</div>
             </div>
           );
-        }) : <div className="rounded-2xl bg-slate-950 p-4 text-center text-sm text-slate-500">暂无可展示的战报。</div>}
+        }) : <div className="md3-panel-inset p-4 text-center text-sm text-slate-500">暂无可展示的战报。</div>}
       </div>
     </div>
   );
@@ -3130,7 +3660,7 @@ function AdminCampAssignmentCard({ players, onSetUserCamp }) {
   );
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp }) {
+function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp, openDialog }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
   const normalizedQuery = adminQuery.trim().toLowerCase();
@@ -3174,7 +3704,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
         </div>
         <div className="space-y-3">
           {filteredMatches.length ? filteredMatches.map((match) => (
-            <AdminMatchRow key={match.id} match={match} players={players} predictions={predictions} onResult={updateMatchResult} onClear={clearMatchResult} onToggleLock={toggleLock} />
+            <AdminMatchRow key={match.id} match={match} players={players} predictions={predictions} onResult={updateMatchResult} onClear={clearMatchResult} onToggleLock={toggleLock} openDialog={openDialog} />
           )) : <div className="rounded-2xl border border-slate-700 bg-slate-950 p-6 text-center text-sm text-slate-500">没有符合条件的比赛</div>}
         </div>
       </Card>
@@ -3182,7 +3712,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
   );
 }
 
-function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggleLock }) {
+function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggleLock, openDialog }) {
   const [homeScore, setHomeScore] = useState(match.homeScore ?? "");
   const [awayScore, setAwayScore] = useState(match.awayScore ?? "");
   const [expanded, setExpanded] = useState(false);
@@ -3191,24 +3721,24 @@ function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggl
   const stage = STAGES[match.stage] || STAGES.GROUP;
   const canSave = Number.isFinite(Number(homeScore)) && Number.isFinite(Number(awayScore)) && homeScore !== "" && awayScore !== "";
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
+    <div className="md3-panel p-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <div className="mb-2 flex flex-wrap gap-2">
-            <Pill className="bg-slate-800 text-slate-300">#{match.no}</Pill>
-            <Pill className="bg-indigo-500/15 text-indigo-200">{stage.label} x{stage.multiplier}</Pill>
+            <Pill>#{match.no}</Pill>
+            <Pill className="bg-emerald-500/15 text-emerald-200">{stage.label} x{stage.multiplier}</Pill>
             <MatchStatus match={match} />
           </div>
           <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
           <div className="mt-1 text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.city}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="number" min="0" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
+          <input type="number" min="0" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} className="md3-field w-16 px-3 py-2 text-center font-black" />
           <span className="text-slate-500">:</span>
-          <input type="number" min="0" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} className="w-16 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-center font-black outline-none" />
-          <button disabled={!canSave} onClick={() => onResult(match.id, Number(homeScore), Number(awayScore))} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">结算</button>
-          <DarkButton disabled={!canToggle} onClick={() => onToggleLock(match.id)} className="px-3 py-2 text-sm font-black">{match.status === "open" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</DarkButton>
-          <DarkButton disabled={!isSettledMatch(match)} onClick={() => onClear(match.id)} className="px-3 py-2 text-sm font-black">清除</DarkButton>
+          <input type="number" min="0" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} className="md3-field w-16 px-3 py-2 text-center font-black" />
+          <M3Button disabled={!canSave} onClick={() => onResult(match.id, Number(homeScore), Number(awayScore))} className="px-3 py-2 text-sm font-black">结算</M3Button>
+          <DarkButton disabled={!canToggle} onClick={() => openDialog?.({ title: match.status === "open" ? "锁定比赛？" : "重新开放比赛？", description: `${teamName(match.home)} vs ${teamName(match.away)} 将${match.status === "open" ? "被锁定，无法继续提交竞猜。" : "重新允许提交竞猜。"} `, confirmLabel: match.status === "open" ? "确认锁定" : "确认开放", onConfirm: () => onToggleLock(match.id) })} className="px-3 py-2 text-sm font-black">{match.status === "open" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</DarkButton>
+          <DarkButton disabled={!isSettledMatch(match)} onClick={() => openDialog?.({ title: "清除比赛结果？", description: "这会移除当前比赛的已结算比分，并影响相关排行榜与成就展示。", confirmLabel: "确认清除", tone: "error", onConfirm: () => onClear(match.id) })} className="px-3 py-2 text-sm font-black">清除</DarkButton>
           {isSettledMatch(match) && <DarkButton onClick={() => setExpanded((open) => !open)} className="px-3 py-2 text-sm font-black">{expanded ? "收起得分" : "查看得分"}</DarkButton>}
         </div>
       </div>
@@ -3231,7 +3761,148 @@ function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggl
 }
 
 function RulesPanel() {
-  return <section className="mt-6 space-y-5"><Card><h2 className="text-2xl font-black">正式规则确认版</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">本系统只计算90分钟常规时间比分，包含伤停补时，不包含加时赛和点球大战。开赛前可以反复修改，开赛后自动锁定。</p></Card><div className="grid gap-5 lg:grid-cols-2"><Card><h3 className="mb-4 text-xl font-black">基础得分</h3><div className="space-y-3">{[["完全猜中比分", "4分"], ["猜中胜平负，并且猜中净胜球", "2分"], ["猜中胜平负，但比分不完全正确", "1分"], ["完全猜错", "0分"]].map(([label, value]) => <div key={label} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-4"><span>{label}</span><span className="text-2xl font-black">{value}</span></div>)}</div></Card><Card><h3 className="mb-4 text-xl font-black">淘汰赛倍率</h3><div className="space-y-3">{Object.entries(STAGES).map(([key, value]) => <div key={key} className="flex items-center justify-between rounded-2xl bg-slate-800/60 p-4"><span>{value.label}</span><span className="text-2xl font-black">x{value.multiplier}</span></div>)}</div></Card></div><Card><h3 className="mb-4 text-xl font-black">各阶段最高得分</h3><div className="overflow-hidden rounded-2xl border border-slate-700"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-3">阶段</th><th className="px-4 py-3">倍率</th><th className="px-4 py-3">完全比分</th><th className="px-4 py-3">胜平负+净胜球</th><th className="px-4 py-3">只中胜平负</th><th className="px-4 py-3">猜错</th></tr></thead><tbody>{Object.entries(STAGES).map(([key, value]) => <tr key={key} className="border-t border-slate-700 bg-slate-950/60"><td className="px-4 py-4 font-black">{value.label}</td><td className="px-4 py-4">x{value.multiplier}</td><td className="px-4 py-4">{4 * value.multiplier}分</td><td className="px-4 py-4">{2 * value.multiplier}分</td><td className="px-4 py-4">{1 * value.multiplier}分</td><td className="px-4 py-4">0分</td></tr>)}</tbody></table></div></Card></section>;
+  const sections = [
+    {
+      id: "base",
+      icon: ShieldCheck,
+      title: "基础竞猜规则",
+      description: "只计算 90 分钟常规时间比分，包含伤停补时，不包含加时赛和点球大战。",
+      content: (
+        <div className="grid gap-3 md:grid-cols-2">
+          {[
+            ["开赛前可反复修改", "比赛开球前，你可以多次更新预测。"],
+            ["开赛后自动锁定", "到点后不再允许修改，避免赛中补票。"],
+            ["赛果仅认常规时间", "加时赛和点球大战不进入积分结算。"],
+            ["朋友预测赛后公开", "未开赛前隐藏他人预测，开赛后统一公开。"],
+          ].map(([label, value]) => (
+            <div key={label} className="md3-outline-card md3-card px-4 py-4">
+              <div className="font-black">{label}</div>
+              <div className="mt-1 text-sm md3-subtle">{value}</div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "points",
+      icon: Trophy,
+      title: "积分规则",
+      description: "主榜所有排名都基于以下基础得分，再乘以赛程阶段倍率。",
+      content: (
+        <div className="space-y-3">
+          {[["完全猜中比分", "4分"], ["猜中胜平负，并且猜中净胜球", "2分"], ["猜中胜平负，但比分不完全正确", "1分"], ["完全猜错", "0分"]].map(([label, value]) => (
+            <div key={label} className="md3-outline-card md3-card flex items-center justify-between px-4 py-4">
+              <span>{label}</span>
+              <span className="text-2xl font-black">{value}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "knockout",
+      icon: Target,
+      title: "淘汰赛倍率",
+      description: "越到后期的关键比赛，命中带来的积分收益越高。",
+      content: (
+        <div className="grid gap-3 md:grid-cols-2">
+          {Object.entries(STAGES).map(([key, value]) => (
+            <div key={key} className="md3-outline-card md3-card flex items-center justify-between px-4 py-4">
+              <span>{value.label}</span>
+              <span className="text-2xl font-black">x{value.multiplier}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "achievement",
+      icon: Crown,
+      title: "成就规则",
+      description: "成就不会改变主榜积分，但会记录参与度、精准度和特殊表现。",
+      content: (
+        <div className="md3-outline-card md3-card px-4 py-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <div className="font-black">公开成就</div>
+              <div className="mt-1 text-sm md3-subtle">会显示具体条件与进度，例如参与场次、命中胜负、命中比分等。</div>
+            </div>
+            <div>
+              <div className="font-black">隐藏成就</div>
+              <div className="mt-1 text-sm md3-subtle">未解锁前只显示占位信息，解锁后展示真实名称、稀有度与时间。</div>
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "deadline",
+      icon: Bell,
+      title: "截止时间说明",
+      description: "所有截止逻辑都以比赛开球时间和系统锁定状态为准。",
+      content: (
+        <div className="overflow-x-auto rounded-[24px] border md3-divider">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+              <tr>
+                <th className="px-4 py-3">阶段</th>
+                <th className="px-4 py-3">倍率</th>
+                <th className="px-4 py-3">完全比分</th>
+                <th className="px-4 py-3">胜平负+净胜球</th>
+                <th className="px-4 py-3">只中胜平负</th>
+                <th className="px-4 py-3">猜错</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(STAGES).map(([key, value]) => (
+                <tr key={key} className="border-t md3-divider">
+                  <td className="px-4 py-4 font-black">{value.label}</td>
+                  <td className="px-4 py-4">x{value.multiplier}</td>
+                  <td className="px-4 py-4">{4 * value.multiplier}分</td>
+                  <td className="px-4 py-4">{2 * value.multiplier}分</td>
+                  <td className="px-4 py-4">{1 * value.multiplier}分</td>
+                  <td className="px-4 py-4">0分</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <section className="space-y-5">
+      <Card className="md3-filled-card">
+        <h2 className="md3-section-title text-[1.9rem]">规则说明</h2>
+        <p className="mt-2 max-w-3xl text-sm leading-6 md3-subtle">把规则拆成更容易阅读的模块，避免长段文本堆叠。所有业务规则保持不变，只优化呈现方式与理解效率。</p>
+      </Card>
+      <div className="space-y-4">
+        {sections.map((section, index) => <RuleAccordion key={section.id} defaultOpen={index === 0} {...section} />)}
+      </div>
+    </section>
+  );
+}
+
+function RuleAccordion({ icon: Icon, title, description, content, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card>
+      <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-start justify-between gap-4 text-left">
+        <div className="flex gap-3">
+          <div className="mt-1 flex h-11 w-11 items-center justify-center rounded-[18px]" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 82%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-xl font-black">{title}</div>
+            <p className="mt-1 text-sm md3-subtle">{description}</p>
+          </div>
+        </div>
+        {open ? <ChevronUp className="h-5 w-5 md3-subtle" /> : <ChevronDown className="h-5 w-5 md3-subtle" />}
+      </button>
+      {open ? <div className="mt-5">{content}</div> : null}
+    </Card>
+  );
 }
 
 function AllHistoryPanel({ player, predictions, matches, onBack }) {
@@ -3250,7 +3921,6 @@ function AllHistoryPanel({ player, predictions, matches, onBack }) {
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <h2 className="text-3xl font-black">{player.name} 的所有历史竞猜记录</h2>
-            <p className="mt-2 text-sm text-slate-400">这里展示该用户的全部竞猜记录，按比赛时间倒序排列。</p>
           </div>
           <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回个人主页</DarkButton>
         </div>
@@ -3259,7 +3929,6 @@ function AllHistoryPanel({ player, predictions, matches, onBack }) {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h3 className="text-xl font-black">全部历史竞猜记录</h3>
-            <p className="text-sm text-slate-400">共 {history.length} 条。</p>
           </div>
           <Pill className="bg-slate-800 text-slate-300">{history.length} 条</Pill>
         </div>
