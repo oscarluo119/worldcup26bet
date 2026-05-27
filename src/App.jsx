@@ -262,8 +262,28 @@ const WORLD_CUP_GOAL_REFERENCES = [
 ];
 
 const emptyFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
-const DEFAULT_AVATAR_EMOJI = "⚽";
-const AVATAR_EMOJIS = ["⚽", "🏆", "🥅", "🔥", "⭐", "👑", "💪", "🎯", "🚀", "🦁", "🐯", "🐼", "🦊", "🐲", "😎"];
+const FAVORITE_TEAM_OPTIONS = [
+  { teamKey: "FRA", teamName: "France", displayNameZh: "法国", flagEmoji: "🇫🇷", countryCode: "fr" },
+  { teamKey: "ESP", teamName: "Spain", displayNameZh: "西班牙", flagEmoji: "🇪🇸", countryCode: "es" },
+  { teamKey: "ARG", teamName: "Argentina", displayNameZh: "阿根廷", flagEmoji: "🇦🇷", countryCode: "ar" },
+  { teamKey: "ENG", teamName: "England", displayNameZh: "英格兰", flagEmoji: "🇬🇧", countryCode: "gb-eng" },
+  { teamKey: "POR", teamName: "Portugal", displayNameZh: "葡萄牙", flagEmoji: "🇵🇹", countryCode: "pt" },
+  { teamKey: "BRA", teamName: "Brazil", displayNameZh: "巴西", flagEmoji: "🇧🇷", countryCode: "br" },
+  { teamKey: "NED", teamName: "Netherlands", displayNameZh: "荷兰", flagEmoji: "🇳🇱", countryCode: "nl" },
+  { teamKey: "MAR", teamName: "Morocco", displayNameZh: "摩洛哥", flagEmoji: "🇲🇦", countryCode: "ma" },
+  { teamKey: "BEL", teamName: "Belgium", displayNameZh: "比利时", flagEmoji: "🇧🇪", countryCode: "be" },
+  { teamKey: "GER", teamName: "Germany", displayNameZh: "德国", flagEmoji: "🇩🇪", countryCode: "de" },
+  { teamKey: "CRO", teamName: "Croatia", displayNameZh: "克罗地亚", flagEmoji: "🇭🇷", countryCode: "hr" },
+  { teamKey: "COL", teamName: "Colombia", displayNameZh: "哥伦比亚", flagEmoji: "🇨🇴", countryCode: "co" },
+  { teamKey: "SEN", teamName: "Senegal", displayNameZh: "塞内加尔", flagEmoji: "🇸🇳", countryCode: "sn" },
+  { teamKey: "MEX", teamName: "Mexico", displayNameZh: "墨西哥", flagEmoji: "🇲🇽", countryCode: "mx" },
+  { teamKey: "USA", teamName: "USA", displayNameZh: "美国", flagEmoji: "🇺🇸", countryCode: "us" },
+];
+const DEFAULT_AVATAR_EMOJI = FAVORITE_TEAM_OPTIONS[0].flagEmoji;
+const FAVORITE_TEAM_BY_EMOJI = FAVORITE_TEAM_OPTIONS.reduce((acc, item) => {
+  acc[item.flagEmoji] = item;
+  return acc;
+}, {});
 const CAMP_CONFIG = {
   A: {
     id: "A",
@@ -1441,11 +1461,17 @@ function AvatarBadge({ children, size = "h-10 w-10", text = "text-xl" }) {
   return <div className={`flex ${size} items-center justify-center rounded-[20px] border ${text}`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)", color: "var(--md-sys-color-on-surface)" }}>{children}</div>;
 }
 
+function FlagIcon({ team, className = "", alt = "" }) {
+  if (!team?.countryCode) return <span className={cn("emoji-glyph", className)}>{team?.flagEmoji || "🏳️"}</span>;
+  return <img src={`https://flagcdn.com/${team.countryCode}.svg`} alt={alt || team.displayNameZh} className={className} loading="lazy" />;
+}
+
 function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
   const label = (player?.name || player?.email || "").trim().slice(0, 1).toUpperCase();
+  const favoriteTeam = FAVORITE_TEAM_BY_EMOJI[player?.avatarEmoji];
   return (
     <div className={`flex ${size} shrink-0 items-center justify-center rounded-[20px] border ${text} font-black`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "linear-gradient(135deg, color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent), color-mix(in srgb, var(--md-sys-color-tertiary-container) 55%, transparent))", color: "var(--md-sys-color-on-primary-container)" }}>
-      {player?.avatarEmoji || label || <User className="h-4 w-4" />}
+      {favoriteTeam ? <FlagIcon team={favoriteTeam} alt={favoriteTeam.displayNameZh} className="h-[1.2em] w-[1.6em] rounded-[3px] object-cover shadow-sm" /> : player?.avatarEmoji ? <span className="emoji-glyph leading-none">{player.avatarEmoji}</span> : label || <User className="h-4 w-4" />}
     </div>
   );
 }
@@ -1463,19 +1489,21 @@ function UserNameOnly({ player, className = "", mono = false, wrap = false }) {
 
 function EmojiPicker({ value, onChange, disabled = false }) {
   return (
-    <div className="grid grid-cols-5 gap-2">
-      {AVATAR_EMOJIS.map((emoji) => {
-        const selected = value === emoji;
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+      {FAVORITE_TEAM_OPTIONS.map((team) => {
+        const selected = value === team.flagEmoji;
         return (
           <button
-            key={emoji}
+            key={team.teamKey}
             type="button"
             disabled={disabled}
-            onClick={() => onChange(emoji)}
-            className={`flex h-10 w-full items-center justify-center rounded-xl border text-xl transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-emerald-300 bg-emerald-500/15 shadow-lg shadow-emerald-950/30" : "border-slate-700 bg-slate-950 hover:bg-emerald-950/45"}`}
-            aria-label={`选择 ${emoji} 作为头像`}
+            onClick={() => onChange(team.flagEmoji)}
+            className={`flex min-h-[74px] w-full flex-col items-center justify-center rounded-xl border px-2 py-2 text-center transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-emerald-300 bg-emerald-500/15 shadow-lg shadow-emerald-950/30" : "border-slate-700 bg-slate-950 hover:bg-emerald-950/45"}`}
+            aria-label={`选择 ${team.displayNameZh} 作为支持球队头像`}
+            title={team.displayNameZh}
           >
-            {emoji}
+            <FlagIcon team={team} alt={team.displayNameZh} className="h-7 w-10 rounded-[4px] object-cover shadow-sm" />
+            <span className="mt-2 text-xs font-bold text-slate-200">{team.displayNameZh}</span>
           </button>
         );
       })}
@@ -1611,7 +1639,8 @@ function AuthScreen({ onSignedIn }) {
             )}
             {isRegister && (
               <div>
-                <div className="md3-label">选择头像</div>
+                <div className="md3-label">选择看好的夺冠国家球队</div>
+                <p className="mb-3 text-xs text-slate-500">这会作为你的头像显示。</p>
                 <EmojiPicker value={avatarEmoji} onChange={setAvatarEmoji} disabled={loading} />
               </div>
             )}
@@ -2927,7 +2956,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
             </div>
             <div>
               <h2 className="text-3xl font-black">{player.name} 的个人主页</h2>
-              {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以编辑你的昵称和 emoji 头像。</p>}
+              {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以编辑你的昵称和支持球队头像。</p>}
             </div>
           </div>
           <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回竞猜排行榜</DarkButton>
@@ -2949,7 +2978,8 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
               </div>
               {!cleanDraftUsername && <div className="mt-2 text-xs text-rose-300">昵称不能为空。</div>}
             </label>
-            <div className="md3-label mb-2">选择 emoji 头像</div>
+            <div className="md3-label mb-2">选择看好的夺冠国家球队</div>
+            <p className="mb-3 text-xs text-slate-500">你选择的国家球队会作为头像展示在排行榜和预测列表里。</p>
             <EmojiPicker value={draftAvatarEmoji} onChange={setDraftAvatarEmoji} disabled={savingAvatar} />
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button disabled={savingAvatar || !cleanDraftUsername || !profileChanged} onClick={saveProfile} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">{savingAvatar ? "保存中..." : "保存资料"}</button>

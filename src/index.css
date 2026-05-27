@@ -6,7 +6,7 @@
 
 :root {
   color-scheme: light;
-  font-family: "Outfit", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: "Outfit", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
   --md-sys-color-primary: #146c43;
   --md-sys-color-on-primary: #f7fff9;
   --md-sys-color-primary-container: #c6f2d9;
@@ -380,6 +380,11 @@ textarea {
   .md3-label {
     @apply mb-2 block text-sm font-semibold;
     color: var(--md-sys-color-on-surface-variant);
+  }
+
+  .emoji-glyph {
+    font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif;
+    font-variant-emoji: emoji;
   }
 
   .md3-nav-rail {
