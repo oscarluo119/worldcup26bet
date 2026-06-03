@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useRef } from "react";
 import {
   ArrowDown,
@@ -585,18 +585,102 @@ function getFallbackMatches() {
   }));
 }
 
-async function fetchWorldCupFixtures() {
-  if (!WORLDCUP_API_KEY) throw new Error("缺少 VITE_WORLDCUP_API_KEY");
-  const fixtures = [];
-  for (let page = 1; page <= 10; page += 1) {
-    const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(WORLDCUP_API_KEY)}&page=${page}`);
-    if (!response.ok) throw new Error(`WorldCupAPI 请求失败：${response.status}`);
-    const data = await response.json();
-    if (!Array.isArray(data) || data.length === 0) break;
-    fixtures.push(...data);
+class WorldCupApiError extends Error {
+  constructor(message, { status = null, code = "provider_error", endpoint = "赛程" } = {}) {
+    super(message);
+    this.name = "WorldCupApiError";
+    this.status = status;
+    this.code = code;
+    this.endpoint = endpoint;
   }
-  if (!fixtures.length) throw new Error("WorldCupAPI 没有返回赛程");
-  return fixtures.map(normalizeWorldCupFixture);
+}
+
+async function buildWorldCupApiError(response, endpointLabel) {
+  let detail = "";
+  try {
+    const rawText = await response.text();
+    if (rawText) {
+      try {
+        const parsed = JSON.parse(rawText);
+        detail = parsed?.error || parsed?.message || parsed?.code || rawText;
+      } catch {
+        detail = rawText;
+      }
+    }
+  } catch {
+    detail = "";
+  }
+
+  const cleanedDetail = detail.trim().slice(0, 180);
+  const status = response.status;
+  const code = status === 401 ? "auth_failed" : status >= 500 ? "provider_unavailable" : "http_error";
+  const baseMessage = status === 401
+    ? `WorldCupAPI ${endpointLabel}鉴权失败（401 Unauthorized）`
+    : `WorldCupAPI ${endpointLabel}请求失败（HTTP ${status}）`;
+
+  return new WorldCupApiError(
+    cleanedDetail ? `${baseMessage}：${cleanedDetail}` : baseMessage,
+    { status, code, endpoint: endpointLabel },
+  );
+}
+
+function normalizeWorldCupApiError(error, endpointLabel = "赛程") {
+  if (error instanceof WorldCupApiError) return error;
+  if (error instanceof TypeError) {
+    return new WorldCupApiError(
+      `WorldCupAPI ${endpointLabel}请求网络异常，请检查网络连接或 provider 服务状态`,
+      { code: "network_error", endpoint: endpointLabel },
+    );
+  }
+  if (error instanceof Error) {
+    return new WorldCupApiError(error.message, { code: "unknown_error", endpoint: endpointLabel });
+  }
+  return new WorldCupApiError(`WorldCupAPI ${endpointLabel}请求失败`, { code: "unknown_error", endpoint: endpointLabel });
+}
+
+function getScheduleFallbackErrorMessage(error) {
+  const normalized = normalizeWorldCupApiError(error, "赛程");
+  const operatorHint = normalized.code === "auth_failed"
+    ? "请检查 WorldCupAPI key、订阅状态，以及 Vercel 前端与 Supabase Edge Function 中的环境变量。"
+    : "请检查 WorldCupAPI 服务状态、网络连接，以及 Vercel 前端与 Supabase Edge Function 中的环境变量。";
+  return `${normalized.message}，已切换到本地备用赛程。${operatorHint}`;
+}
+
+function isAdminOnlyDataError(message) {
+  const text = String(message || "");
+  return text.includes("WorldCupAPI");
+}
+
+async function fetchWorldCupFixtures() {
+  if (!WORLDCUP_API_KEY) {
+    throw new WorldCupApiError("缺少 VITE_WORLDCUP_API_KEY，无法请求 WorldCupAPI 赛程", {
+      code: "missing_api_key",
+      endpoint: "赛程",
+    });
+  }
+
+  try {
+    const fixtures = [];
+    for (let page = 1; page <= 10; page += 1) {
+      const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(WORLDCUP_API_KEY)}&page=${page}`);
+      if (!response.ok) throw await buildWorldCupApiError(response, "赛程");
+
+      const data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+      fixtures.push(...data);
+    }
+
+    if (!fixtures.length) {
+      throw new WorldCupApiError("WorldCupAPI 赛程接口返回空数据", {
+        code: "empty_data",
+        endpoint: "赛程",
+      });
+    }
+
+    return fixtures.map(normalizeWorldCupFixture);
+  } catch (error) {
+    throw normalizeWorldCupApiError(error, "赛程");
+  }
 }
 
 function mapProfile(row) {
@@ -1403,14 +1487,14 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
         }}
         className={cn(
           "group flex items-center gap-3 rounded-[22px] px-4 py-3 text-left transition",
-          mobile ? "min-w-0 flex-1 flex-col gap-1 px-2 py-2 text-center text-[11px]" : "w-full text-sm font-semibold",
+          mobile ? "min-w-0 flex-1 flex-col gap-1.5 rounded-[18px] px-1.5 py-2 text-center text-[12px] font-semibold" : "w-full text-sm font-semibold",
           active ? "md3-filled-card" : "md3-outline-card",
         )}
       >
-        <span className={cn("flex items-center justify-center rounded-full", mobile ? "h-8 w-8" : "h-10 w-10")} style={{ background: active ? "color-mix(in srgb, var(--md-sys-color-primary-container) 92%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)", color: active ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)" }}>
-          <Icon className="h-4 w-4" />
+        <span className={cn("flex items-center justify-center rounded-full", mobile ? "h-9 w-9" : "h-10 w-10")} style={{ background: active ? "color-mix(in srgb, var(--md-sys-color-primary-container) 92%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)", color: active ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)" }}>
+          <Icon className={cn("h-4 w-4", mobile && "h-[18px] w-[18px]")} />
         </span>
-        <span className={cn("min-w-0", mobile ? "truncate" : "flex-1")}>{tab.label}</span>
+        <span className={cn("min-w-0", mobile ? "max-w-full truncate leading-tight" : "flex-1")}>{tab.label}</span>
       </button>
     );
   }
@@ -1498,12 +1582,12 @@ function EmojiPicker({ value, onChange, disabled = false }) {
             type="button"
             disabled={disabled}
             onClick={() => onChange(team.flagEmoji)}
-            className={`flex min-h-[74px] w-full flex-col items-center justify-center rounded-xl border px-2 py-2 text-center transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-emerald-300 bg-emerald-500/15 shadow-lg shadow-emerald-950/30" : "border-slate-700 bg-slate-950 hover:bg-emerald-950/45"}`}
+            className={`flex min-h-[68px] w-full flex-col items-center justify-center rounded-xl border px-2 py-2 text-center transition disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-[74px] ${selected ? "border-emerald-300 bg-emerald-500/15 shadow-lg shadow-emerald-950/30" : "border-slate-700 bg-slate-950 hover:bg-emerald-950/45"}`}
             aria-label={`选择 ${team.displayNameZh} 作为支持球队头像`}
             title={team.displayNameZh}
           >
-            <FlagIcon team={team} alt={team.displayNameZh} className="h-7 w-10 rounded-[4px] object-cover shadow-sm" />
-            <span className="mt-2 text-xs font-bold text-slate-200">{team.displayNameZh}</span>
+            <FlagIcon team={team} alt={team.displayNameZh} className="h-6 w-9 rounded-[4px] object-cover shadow-sm sm:h-7 sm:w-10" />
+            <span className="mt-1.5 text-[11px] font-bold leading-tight text-slate-200 sm:mt-2 sm:text-xs">{team.displayNameZh}</span>
           </button>
         );
       })}
@@ -1511,16 +1595,16 @@ function EmojiPicker({ value, onChange, disabled = false }) {
   );
 }
 
-function StatCard({ icon: Icon, label, value, sub }) {
+function StatCard({ icon: Icon, label, value, sub, className = "", compact = false }) {
   return (
-    <Card className="md3-filled-card relative overflow-hidden">
+    <Card className={cn("md3-filled-card relative overflow-hidden", compact && "!p-3.5 sm:!p-5", className)}>
       <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-70" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--md-sys-color-secondary) 32%, transparent), transparent 65%)" }} />
-      <div className="relative flex items-center gap-3">
-        <div className="rounded-[20px] p-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}><Icon className="h-5 w-5" /></div>
+      <div className={cn("relative flex items-center gap-3", compact && "items-start")}>
+        <div className={cn("rounded-[20px] p-3", compact && "rounded-[16px] p-2.5")} style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}><Icon className={cn("h-5 w-5", compact && "h-4 w-4")} /></div>
         <div>
-          <div className="text-sm md3-subtle">{label}</div>
-          <div className="text-2xl font-black tracking-tight">{value}</div>
-          {sub && <div className="mt-1 text-xs md3-subtle">{sub}</div>}
+          <div className={cn("text-sm md3-subtle", compact && "text-xs")}>{label}</div>
+          <div className={cn("text-2xl font-black tracking-tight", compact && "text-[1.35rem] leading-6 sm:text-2xl")}>{value}</div>
+          {sub && <div className={cn("mt-1 text-xs md3-subtle", compact && "mt-0.5 text-[11px] leading-4")}>{sub}</div>}
         </div>
       </div>
     </Card>
@@ -1612,13 +1696,13 @@ function AuthScreen({ onSignedIn }) {
   return (
     <div className="md3-app flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[28px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white", boxShadow: "var(--md-shadow-2)" }}>
-            <Trophy className="h-8 w-8" />
+        <div className="mb-4 text-center sm:mb-6">
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-[24px] sm:mb-4 sm:h-16 sm:w-16 sm:rounded-[28px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white", boxShadow: "var(--md-shadow-2)" }}>
+            <Trophy className="h-7 w-7 sm:h-8 sm:w-8" />
           </div>
-          <h1 className="text-3xl font-black">世界杯竞猜局</h1>
+          <h1 className="text-[2rem] font-black leading-tight sm:text-3xl">世界杯竞猜局</h1>
         </div>
-        <Card>
+        <Card className="px-4 py-4 sm:px-5 sm:py-5">
           <M3SegmentedControl
             options={[
               { value: "login", label: "登录" },
@@ -1640,7 +1724,7 @@ function AuthScreen({ onSignedIn }) {
             {isRegister && (
               <div>
                 <div className="md3-label">选择看好的夺冠国家球队</div>
-                <p className="mb-3 text-xs text-slate-500">这会作为你的头像显示。</p>
+                <p className="mb-2 text-xs leading-5 text-slate-500">这会作为你的头像显示。</p>
                 <EmojiPicker value={avatarEmoji} onChange={setAvatarEmoji} disabled={loading} />
               </div>
             )}
@@ -1742,6 +1826,7 @@ export default function WorldCupPredictionMVP() {
   const currentPlayer = players.find((p) => p.id === currentPlayerId) || fallbackPlayer || players[0];
   const profilePlayer = players.find((p) => p.id === selectedProfilePlayerId) || currentPlayer;
   const isAdmin = Boolean(currentPlayer?.isAdmin);
+  const visibleDataError = isAdmin || !isAdminOnlyDataError(dataError) ? dataError : "";
   const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
   const firstKickoff = useMemo(() => matches.reduce((earliest, match) => {
     const kickoff = new Date(match.kickoff);
@@ -1882,7 +1967,7 @@ export default function WorldCupPredictionMVP() {
           setScheduleSource("worldcupapi");
         } catch (scheduleError) {
           setScheduleSource("fallback");
-          setDataError(`${scheduleError.message || "官方赛程加载失败"}，已使用本地备用赛程。`);
+          setDataError(getScheduleFallbackErrorMessage(scheduleError));
         }
         baseMatchesRef.current = baseMatches;
         setCompleteSchedule(baseSchedule);
@@ -2259,7 +2344,7 @@ export default function WorldCupPredictionMVP() {
           currentPlayer={currentPlayer}
           signOut={signOut}
           isAdmin={isAdmin}
-          dataError={dataError}
+          dataError={visibleDataError}
         />
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
@@ -2315,21 +2400,22 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
   }
 
   return (
-    <section className="space-y-5">
-      <div className="md3-stats-grid">
-        <StatCard icon={Trophy} label="我的排名" value={rankingIndex ? `#${rankingIndex}` : "--"} sub="主榜实时排名" />
-        <StatCard icon={Award} label="我的积分" value={`${myStats?.total || 0}分`} sub={`命中比分 ${myStats?.exactCount || 0} 次`} />
-        <StatCard icon={Target} label="已竞猜场次" value={`${myStats?.played || 0}场`} sub={`仍有 ${unPredictedCount} 场待提交`} />
-        <StatCard icon={Flame} label="赛事阶段" value={stageMeta.label} sub={`当前阶段倍率 x${stageMeta.multiplier}`} />
-        <StatCard icon={Bell} label="下场截止" value={nextDeadlineValue} sub={nextDeadlineOpponent} />
+    <section className="space-y-4 sm:space-y-5">
+      <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard icon={Trophy} label="我的排名" value={rankingIndex ? `#${rankingIndex}` : "--"} sub="主榜实时排名" compact />
+        <StatCard icon={Award} label="我的积分" value={`${myStats?.total || 0}分`} sub={`完全比分 ${myStats?.exactCount || 0} 次`} compact />
+        <StatCard icon={Target} label="待提交" value={`${unPredictedCount}场`} sub={`已竞猜 ${myStats?.played || 0} 场`} compact />
+        <StatCard icon={Bell} label="下场截止" value={nextDeadline ? formatBeijingTime(nextDeadline.kickoff) : "--"} sub={nextDeadline ? formatDateOnly(nextDeadline.kickoff).replace("星期", "周") : "暂无开放比赛"} compact />
+        <StatCard icon={Flame} label="赛事阶段" value={stageMeta.label} sub={`当前倍率 x${stageMeta.multiplier}`} compact className="sm:col-span-2 xl:col-span-1" />
       </div>
 
-      <Card className="md3-tonal-card">
-        <div className="mb-4 flex items-center justify-between gap-3">
+      <Card className="md3-tonal-card !p-3.5 sm:!p-5">
+        <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
           <div>
-            <h2 className="md3-section-title text-[1.7rem]">下一场比赛竞猜入口</h2>
+            <h2 className="md3-section-title text-[1.2rem] sm:text-[1.7rem]">下一场比赛竞猜入口</h2>
+            <div className="mt-1 text-xs md3-subtle">{nextDeadlineOpponent}</div>
           </div>
-          <M3Button tone="outline" onClick={() => setActiveTab("schedule")}>查看全部赛程</M3Button>
+          <M3Button tone="outline" className="px-3 py-2 text-xs sm:text-sm" onClick={() => setActiveTab("schedule")}>全部赛程</M3Button>
         </div>
         {nextDeadline ? (
           <MatchFeatureCard
@@ -2343,39 +2429,44 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
         )}
       </Card>
 
-      <Card className="md3-filled-card">
-        <div className="mb-4 flex items-center justify-between gap-3">
+      <Card className="md3-filled-card !p-3.5 sm:!p-5">
+        <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
           <div>
-            <h2 className="md3-section-title text-[1.5rem]">排行榜 Top 3</h2>
+            <h2 className="md3-section-title text-[1.15rem] sm:text-[1.5rem]">排行榜 Top 3</h2>
           </div>
-          <M3Button tone="text" onClick={() => setActiveTab("ranking")}>完整榜单</M3Button>
+          <M3Button tone="text" className="px-2.5 py-2 text-xs sm:text-sm" onClick={() => setActiveTab("ranking")}>完整榜单</M3Button>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="space-y-2.5 md:hidden">
+          {rankings.slice(0, 3).map((player, index) => (
+            <CompactLeaderboardRow key={`compact-${player.id}`} player={player} place={index + 1} onClick={() => onOpenPlayerProfile(player.id)} />
+          ))}
+        </div>
+        <div className="hidden gap-3 md:grid md:grid-cols-3">
           {rankings.slice(0, 3).map((player, index) => (
             <PodiumCard key={player.id} player={player} place={index + 1} onClick={() => onOpenPlayerProfile(player.id)} />
           ))}
         </div>
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <HomeMatchSection title="今日比赛" matches={todayMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="今天暂无比赛" onOpenMatch={openMatch} />
-        <Card>
-          <div className="mb-4 flex items-center justify-between gap-3">
+        <Card className="!p-3.5 sm:!p-5">
+          <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
             <div>
-              <h2 className="md3-section-title text-[1.5rem]">最近获得的成就</h2>
+              <h2 className="md3-section-title text-[1.15rem] sm:text-[1.5rem]">最近获得的成就</h2>
             </div>
-            <M3Button tone="text" onClick={() => setActiveTab("achievements")}>成就墙</M3Button>
+            <M3Button tone="text" className="px-2.5 py-2 text-xs sm:text-sm" onClick={() => setActiveTab("achievements")}>成就墙</M3Button>
           </div>
           {recentAchievements.length ? (
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               {recentAchievements.map((item) => (
-                <div key={item.achievement.id} className="md3-outline-card md3-card px-4 py-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
+                <div key={item.achievement.id} className="md3-outline-card md3-card !p-3 sm:!p-4">
+                  <div className="mb-1.5 flex items-center justify-between gap-3 sm:mb-2">
                     <div className="font-black">{item.achievement.name}</div>
                     <Pill className={getAchievementBadgeClass(item)}>{item.achievement.rarity}</Pill>
                   </div>
-                  <div className="text-sm md3-subtle">{item.achievement.description}</div>
-                  <M3Progress value={item.currentPlayerProgress.current} max={item.currentPlayerProgress.target} className="mt-3" />
+                  <div className="text-xs sm:text-sm md3-subtle">{item.achievement.description}</div>
+                  <M3Progress value={item.currentPlayerProgress.current} max={item.currentPlayerProgress.target} className="mt-2.5 sm:mt-3" />
                 </div>
               ))}
             </div>
@@ -2392,14 +2483,14 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
 
 function HomeMatchSection({ title, matches, predictions, currentPlayerId, currentTime, emptyText, onOpenMatch }) {
   return (
-    <Card>
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <Card className="!p-3.5 sm:!p-5">
+      <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
         <div>
-          <h2 className="md3-section-title text-[1.5rem]">{title}</h2>
+          <h2 className="md3-section-title text-[1.15rem] sm:text-[1.5rem]">{title}</h2>
         </div>
         <Pill>{matches.length} 场</Pill>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-2.5 sm:space-y-3">
         {matches.length ? matches.map((match) => (
           <MatchListButton key={match.id} match={match} pred={predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id)} active={false} now={currentTime} onClick={() => onOpenMatch(match.id)} />
         )) : <EmptyState icon={CalendarDays} title={emptyText} description="新的比赛信息出现后，这里会自动补上。" />}
@@ -2437,27 +2528,46 @@ function PodiumCard({ player, place, onClick }) {
   );
 }
 
+function CompactLeaderboardRow({ player, place, onClick }) {
+  return (
+    <button type="button" onClick={onClick} className="md3-panel-inset flex w-full items-center gap-3 rounded-[20px] px-3 py-2.5 text-left">
+      <div className="flex h-9 w-9 items-center justify-center rounded-[14px] text-sm font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 70%, transparent)", color: "var(--md-sys-color-on-secondary-container)" }}>
+        #{place}
+      </div>
+      <UserBadge player={player} size="h-9 w-9" text="text-xs" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-black">{player.name}</div>
+        <div className="text-[11px] md3-subtle">比分 {player.exactCount} 次 · 结果 {player.outcomeCount} 次</div>
+      </div>
+      <div className="text-right">
+        <div className="text-lg font-black">{player.total}</div>
+        <div className="text-[11px] md3-subtle">总分</div>
+      </div>
+    </button>
+  );
+}
+
 function MatchFeatureCard({ match, pred, now, onClick }) {
   return (
-    <button type="button" onClick={onClick} className="md3-card w-full text-left">
-      <div className="mb-3 flex flex-wrap gap-2">
+    <button type="button" onClick={onClick} className="md3-card w-full !p-3.5 text-left sm:!p-5">
+      <div className="mb-2.5 flex flex-wrap gap-1.5 sm:mb-3 sm:gap-2">
         <Pill>第 {match.no} 场</Pill>
         <Pill>{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
         <MatchStatus match={match} />
         <MatchCountdown match={match} now={now} />
       </div>
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 text-2xl font-black">
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-[1fr_auto] md:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-[1.05rem] font-black leading-6 sm:text-2xl">
             <TeamName name={match.home} logo={match.homeLogo} />
             <span className="md3-subtle">vs</span>
             <TeamName name={match.away} logo={match.awayLogo} />
           </div>
-          <div className="mt-2 text-sm md3-subtle">{formatDateTime(match.kickoff)} · {match.city || match.group}</div>
+          <div className="mt-1.5 text-xs sm:text-sm md3-subtle">{formatDateTime(match.kickoff)} · {match.city || match.group}</div>
         </div>
-        <div className="rounded-[24px] px-4 py-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
-          <div className="text-xs uppercase tracking-[0.18em] md3-subtle">我的提交</div>
-          <div className="mt-2 text-xl font-black">{pred ? `${pred.home}:${pred.away}` : "未提交"}</div>
+        <div className="rounded-[18px] px-3 py-2.5 md:self-start" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+          <div className="text-[11px] uppercase tracking-[0.18em] md3-subtle">我的提交</div>
+          <div className="mt-1 text-base font-black sm:text-xl">{pred ? `${pred.home}:${pred.away}` : "未提交"}</div>
         </div>
       </div>
     </button>
@@ -2467,10 +2577,10 @@ function MatchFeatureCard({ match, pred, now, onClick }) {
 function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
   const stage = STAGES[match.stage] || STAGES.GROUP;
   return (
-    <button onClick={onClick} className={`md3-card w-full text-left ${active ? "md3-filled-card" : "md3-outline-card"}`}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="mb-2 flex flex-wrap gap-2">
+    <button onClick={onClick} className={`md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
+      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center md:justify-between">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap gap-1.5 sm:gap-2">
             <Pill>#{match.no}</Pill>
             <Pill>{stage.label} x{stage.multiplier}</Pill>
             <MatchStatus match={match} />
@@ -2478,10 +2588,10 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
             <Pill style={active ? { background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" } : undefined}>{active ? "收起详情" : "展开竞猜"}</Pill>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-lg font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
-          <div className="mt-1 text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
+          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
+          <div className="mt-1 text-[11px] sm:text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
-        <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-2 text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
+        <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-1.5 text-[11px] sm:text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
       </div>
     </button>
   );
@@ -2498,20 +2608,20 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
 
   return (
     <section>
-      <Card>
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div><h2 className="md3-section-title text-[1.7rem]">赛程与竞猜</h2></div>
-          <div className="flex gap-2"><div className="relative min-w-0"><Search className="absolute left-3 top-3 h-4 w-4 md3-subtle" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索球队/阶段" className="md3-field w-full pl-9 pr-3 text-sm" /></div><select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="md3-select px-3 py-2 text-sm"><option value="ALL">全部</option>{Object.entries(STAGES).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></div>
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="mb-3 flex flex-col gap-3 md:mb-4 md:flex-row md:items-center md:justify-between">
+          <div><h2 className="md3-section-title text-[1.45rem] sm:text-[1.7rem]">赛程与竞猜</h2></div>
+          <div className="flex w-full flex-col gap-2 sm:flex-row md:w-auto"><div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-3 h-4 w-4 md3-subtle" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索球队/阶段" className="md3-field w-full pl-9 pr-3 text-sm" /></div><select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="md3-select w-full px-3 py-2 text-sm sm:w-auto"><option value="ALL">全部</option>{Object.entries(STAGES).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></div>
         </div>
-        <div className="space-y-6">
-          {Object.entries(groupedMatches).length ? Object.entries(groupedMatches).map(([date, items]) => <div key={date}><div className="mb-3 flex items-center gap-2 text-sm font-black md3-subtle"><CalendarDays className="h-4 w-4" /> {date}</div><div className="space-y-3">{items.map((match) => {
+        <div className="space-y-4 sm:space-y-6">
+          {Object.entries(groupedMatches).length ? Object.entries(groupedMatches).map(([date, items]) => <div key={date}><div className="mb-2.5 flex items-center gap-2 text-sm font-black md3-subtle sm:mb-3"><CalendarDays className="h-4 w-4" /> {date}</div><div className="space-y-2.5 sm:space-y-3">{items.map((match) => {
             const pred = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id);
             const active = selectedMatchId === match.id;
             return (
               <div key={match.id} className={`overflow-hidden rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
                 <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
-                  <div className="border-t px-4 pb-4 pt-4 md3-divider">
+                  <div className="border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
                     <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} />
                   </div>
                 )}
@@ -2542,7 +2652,7 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <Pill className="mb-3"><Medal className="h-3.5 w-3.5" /> 世界杯排名 · 小组积分</Pill>
-            <h2 className="text-3xl font-black tracking-tight">世界杯小组实时积分榜</h2>
+            <h2 className="text-[1.75rem] font-black tracking-tight sm:text-3xl">世界杯小组实时积分榜</h2>
           </div>
           <div className="md3-panel px-4 py-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">已结算比赛</div><div className="mt-1 text-3xl font-black">{settledCount}</div></div>
         </div>
@@ -2579,13 +2689,40 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
 
 function GroupStandingsCard({ group, table }) {
   return (
-    <Card>
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <Card className="!p-3.5 sm:!p-5">
+      <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
         <div>
           <h3 className="text-xl font-black">{group}</h3>
         </div>
         <Pill>{table.reduce((sum, team) => sum + team.played, 0) / 2} 场已赛</Pill>
       </div>
+      <div className="space-y-2.5 md:hidden">
+        {table.map((team, index) => {
+          const status = getQualificationLabel(index);
+          return (
+            <div key={`${group}-${team.team}-mobile`} className="md3-panel-inset p-3">
+              <div className="flex items-center gap-3">
+                <span className="rounded-full px-2 py-1 text-xs font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)" }}>#{index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" /></div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] md3-subtle">
+                    <Pill className={status.className}>{status.label}</Pill>
+                    <span>{team.played}赛</span>
+                    <span>{team.won}/{team.drawn}/{team.lost}</span>
+                    <span>净胜 {team.goalDifference}</span>
+                    <span>进失 {team.goalsFor}/{team.goalsAgainst}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px] md3-subtle">积分</div>
+                  <div className="text-xl font-black text-emerald-200">{team.points}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="hidden md:block">
       <div className="md3-table-shell">
         <table className="w-full min-w-[620px] text-left text-sm">
           <thead className="md3-table-head">
@@ -2623,6 +2760,7 @@ function GroupStandingsCard({ group, table }) {
           </tbody>
         </table>
       </div>
+      </div>
     </Card>
   );
 }
@@ -2648,7 +2786,7 @@ function FullScheduleCalendar({ schedule, source }) {
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <Pill className="mb-3"><CalendarDays className="h-3.5 w-3.5" /> 完整赛程 · 北京时间</Pill>
-            <h2 className="text-3xl font-black tracking-tight">完整赛程列表</h2>
+            <h2 className="text-[1.75rem] font-black tracking-tight sm:text-3xl">完整赛程列表</h2>
             <Pill className={source === "worldcupapi" ? "mt-3 bg-emerald-500/15 text-emerald-200" : "mt-3 bg-amber-500/15 text-amber-200"}>{source === "worldcupapi" ? "WorldCupAPI 实时赛程" : "本地备用赛程"}</Pill>
           </div>
           <div className="md3-panel px-4 py-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">比赛总数</div><div className="mt-1 text-3xl font-black">{schedule.length}</div></div>
@@ -2657,7 +2795,7 @@ function FullScheduleCalendar({ schedule, source }) {
       <Card>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div><h3 className="text-xl font-black">快速浏览</h3></div>
-          <div className="flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0"><Search className="absolute left-3 top-2.5 h-4 w-4 md3-subtle" /><input value={scheduleQuery} onChange={(e) => setScheduleQuery(e.target.value)} placeholder="搜索球队 / 球馆 / 城市" className="md3-field w-full py-2 pl-9 pr-3 text-sm sm:w-64" /></div><select value={scheduleStage} onChange={(e) => setScheduleStage(e.target.value)} className="md3-select px-3 py-2 text-sm">{stageOptions.map((stage) => <option key={stage} value={stage}>{stage === "ALL" ? "全部小组/阶段" : stage}</option>)}</select></div>
+          <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto"><div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 md3-subtle" /><input value={scheduleQuery} onChange={(e) => setScheduleQuery(e.target.value)} placeholder="搜索球队 / 球馆 / 城市" className="md3-field w-full py-2 pl-9 pr-3 text-sm sm:w-64" /></div><select value={scheduleStage} onChange={(e) => setScheduleStage(e.target.value)} className="md3-select w-full px-3 py-2 text-sm sm:w-auto">{stageOptions.map((stage) => <option key={stage} value={stage}>{stage === "ALL" ? "全部小组/阶段" : stage}</option>)}</select></div>
         </div>
       </Card>
       <Card className={CARD_TONE.tonal}>
@@ -2782,7 +2920,7 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
 }
 
 function ScoreInput({ label, value, disabled, onChange }) {
-  return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
+  return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
 }
 
 function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, locked, firstKickoff, funResults }) {
@@ -2808,7 +2946,7 @@ function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, lo
     });
   }, [players, funPredictions, funResults]);
   return (
-    <section className="mt-6 space-y-5"><Card><div className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><Pill className="mb-3"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</Pill><h2 className="text-3xl font-black tracking-tight">趣味预测栏</h2></div><div className="md3-panel-strong p-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">锁定时间</div><div className="mt-1 text-lg font-black">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-5 lg:grid-cols-[420px_1fr]"><Card className={CARD_TONE.tonal}><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">我的趣味预测</h3></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}</div><div className="space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="md3-label">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="md3-field text-sm disabled:opacity-50" /><div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="md3-panel-inset px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-3 font-black"><CheckCircle2 className="h-5 w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="md3-panel-inset p-3 text-xs leading-relaxed text-slate-500">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card className={CARD_TONE.default}><div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">朋友趣味预测</h3></div><Pill>{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-3 md:grid-cols-2">{players.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
+    <section className="mt-6 space-y-4 sm:space-y-5"><Card className="!p-3.5 sm:!p-5"><div className="flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><Pill className="mb-2.5"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</Pill><h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">趣味预测栏</h2></div><div className="md3-panel-strong px-3 py-3 text-slate-100 shadow-xl sm:p-4"><div className="text-[11px] font-bold md3-subtle">锁定时间</div><div className="mt-1 text-sm font-black sm:text-lg">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-4 lg:grid-cols-[380px_1fr]"><Card className={`${CARD_TONE.tonal} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">我的趣味预测</h3></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}</div><div className="space-y-3 sm:space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="md3-label">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="md3-field py-2.5 text-sm disabled:opacity-50" /><div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500 sm:text-xs">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="md3-panel-inset px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-black sm:py-3"><CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="md3-panel-inset p-3 text-[11px] leading-relaxed text-slate-500 sm:text-xs">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card className={`${CARD_TONE.default} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">朋友趣味预测</h3></div><Pill>{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-2.5 sm:gap-3 md:grid-cols-2">{players.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
   );
 }
 
@@ -2817,11 +2955,11 @@ function FunInput({ label, value, disabled, onChange, placeholder }) {
 }
 
 function FunPredictionPlayerCard({ player, prediction, isMe, canShow, awards }) {
-  return <div className="md3-card md3-card-tone-highlight p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><UserBadge player={player} /><div><div className="font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-xs text-slate-500">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-5 w-5 text-emerald-200" /> : <XCircle className="h-5 w-5 text-slate-600" />}</div>{canShow ? <div className="space-y-2 text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-2 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="md3-panel-inset px-3 py-5 text-center text-sm text-slate-500">第一场开赛后公开</div>}</div>;
+  return <div className="md3-card md3-card-tone-highlight !p-3 sm:!p-4"><div className="mb-2.5 flex items-center justify-between gap-3 sm:mb-3"><div className="flex min-w-0 items-center gap-3"><UserBadge player={player} size="h-9 w-9 sm:h-10 sm:w-10" /><div className="min-w-0"><div className="truncate font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-[11px] text-slate-500 sm:text-xs">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-4 w-4 text-emerald-200 sm:h-5 sm:w-5" /> : <XCircle className="h-4 w-4 text-slate-600 sm:h-5 sm:w-5" />}</div>{canShow ? <div className="space-y-1.5 text-xs sm:space-y-2 sm:text-sm"><InfoRow label="冠军" value={prediction ? teamName(prediction.champion) : "--"} /><InfoRow label="金靴" value={prediction?.goldenBoot || "--"} /><InfoRow label="首张红牌" value={prediction ? teamName(prediction.firstRedCardTeam) : "--"} /><InfoRow label="总进球数" value={prediction?.totalGoals ?? "--"} />{awards.length > 0 && <div className="flex flex-wrap gap-1.5 pt-1">{awards.map((award) => <Pill key={award} className="bg-yellow-500/15 text-yellow-200">{award}</Pill>)}</div>}</div> : <div className="md3-panel-inset px-3 py-4 text-center text-xs text-slate-500 sm:text-sm">第一场开赛后公开</div>}</div>;
 }
 
 function InfoRow({ label, value }) {
-  return <div className="md3-panel-inset flex items-center justify-between px-3 py-2"><span className="text-slate-500">{label}</span><span className="font-black">{value}</span></div>;
+  return <div className="md3-panel-inset flex items-center justify-between gap-2 px-3 py-2"><span className="text-slate-500">{label}</span><span className="truncate text-right font-black">{value}</span></div>;
 }
 
 function PredictionHistoryList({ items }) {
@@ -2941,28 +3079,28 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   }
 
   return (
-    <section className="mt-6 space-y-5">
-      <Card>
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div className="flex items-start gap-4">
+    <section className="mt-6 space-y-4 sm:space-y-5">
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div className="flex items-start gap-3 sm:gap-4">
             <div>
               {isOwnProfile ? (
                 <button type="button" onClick={() => setAvatarEditorOpen((open) => !open)} className="rounded-xl outline-none ring-emerald-300 transition hover:scale-105 focus-visible:ring-2" aria-label="修改头像">
-                  <UserBadge player={player} size="h-16 w-16" text="text-xl" />
+                  <UserBadge player={player} size="h-14 w-14 sm:h-16 sm:w-16" text="text-lg sm:text-xl" />
                 </button>
               ) : (
-                <UserBadge player={player} size="h-16 w-16" text="text-xl" />
+                <UserBadge player={player} size="h-14 w-14 sm:h-16 sm:w-16" text="text-lg sm:text-xl" />
               )}
             </div>
             <div>
-              <h2 className="text-3xl font-black">{player.name} 的个人主页</h2>
-              {isOwnProfile && <p className="mt-2 text-xs text-slate-500">点击头像可以编辑你的昵称和支持球队头像。</p>}
+              <h2 className="text-[1.45rem] font-black sm:text-3xl">{player.name} 的个人主页</h2>
+              {isOwnProfile && <p className="mt-1.5 text-[11px] text-slate-500 sm:mt-2 sm:text-xs">点击头像可以编辑你的昵称和支持球队头像。</p>}
             </div>
           </div>
-          <DarkButton onClick={onBack} className="px-4 py-3 text-sm font-black">返回竞猜排行榜</DarkButton>
+          <DarkButton onClick={onBack} className="px-4 py-2.5 text-sm font-black sm:py-3">返回竞猜排行榜</DarkButton>
         </div>
         {isOwnProfile && avatarEditorOpen && (
-          <div className="md3-panel mt-5 p-4">
+          <div className="md3-panel mt-4 p-3.5 sm:mt-5 sm:p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h3 className="font-black">编辑个人资料</h3>
@@ -2988,7 +3126,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
           </div>
         )}
         {isOwnProfile && (
-          <div className="md3-panel mt-5 p-4">
+          <div className="md3-panel mt-4 p-3.5 sm:mt-5 sm:p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h3 className="font-black">外观设置</h3>
@@ -3001,11 +3139,11 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         )}
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard icon={Crown} label="总积分" value={`${ranking.total || 0}分`} sub={`当前排名 #${rankingIndex || "-"}`} />
-        <StatCard icon={Medal} label="完全比分" value={`${ranking.exactCount || 0}次`} sub="完全猜中比分" />
-        <StatCard icon={CheckCircle2} label="命中胜平负" value={`${ranking.outcomeCount || 0}次`} sub="包含完全比分" />
-        <StatCard icon={Flame} label="最高连胜" value={`${maxStreak}场`} sub="连续命中胜平负" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        <StatCard icon={Crown} label="总积分" value={`${ranking.total || 0}分`} sub={`当前排名 #${rankingIndex || "-"}`} compact />
+        <StatCard icon={Medal} label="完全比分" value={`${ranking.exactCount || 0}次`} sub="完全猜中比分" compact />
+        <StatCard icon={CheckCircle2} label="命中胜平负" value={`${ranking.outcomeCount || 0}次`} sub="包含完全比分" compact />
+        <StatCard icon={Flame} label="最高连胜" value={`${maxStreak}场`} sub="连续命中胜平负" compact />
       </div>
 
       <Card className={playerCamp ? `${playerCamp.card} ${playerCamp.glow}` : CARD_TONE.default}>
@@ -3016,7 +3154,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
           <Pill className={playerCamp ? playerCamp.pill : ""}>{getCampDisplayName(player.campId)}</Pill>
         </div>
         {playerCamp && campStats ? (
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <div className="md3-panel-inset p-4">
               <div className="text-sm text-slate-400">阵营内总分排名</div>
               <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{campRank + 1}</div>
@@ -3267,14 +3405,35 @@ function RankingPanel({ players, rankingTrend, predictionStyleRankings, streakRa
 
 function ScoreRankingTable({ rankings, currentPlayerId, settledCount, onOpenPlayerProfile }) {
   return (
-    <Card>
-      <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+    <Card className="!p-3.5 sm:!p-5">
+      <div className="mb-4 flex flex-col justify-between gap-3 md:mb-5 md:flex-row md:items-end">
         <div>
-          <h2 className="md3-section-title text-[1.6rem]">完整排名列表</h2>
+          <h2 className="md3-section-title text-[1.3rem] sm:text-[1.6rem]">完整排名列表</h2>
         </div>
         <Pill>已结算 {settledCount} 场</Pill>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-2.5 md:hidden">
+        {rankings.map((player, index) => {
+          const isCurrent = player.id === currentPlayerId;
+          return (
+            <button key={`compact-${player.id}`} type="button" onClick={() => onOpenPlayerProfile?.(player.id)} className={cn("md3-panel-inset flex w-full items-center gap-3 rounded-[22px] px-3 py-2.5 text-left", isCurrent && "ring-1 ring-[color:var(--md-sys-color-primary)]")}>
+              <div className="flex h-9 w-9 items-center justify-center rounded-[14px] text-sm font-black" style={{ background: index < 3 ? "color-mix(in srgb, var(--md-sys-color-secondary-container) 72%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)", color: index < 3 ? "var(--md-sys-color-on-secondary-container)" : "var(--md-sys-color-on-surface)" }}>
+                #{index + 1}
+              </div>
+              <UserBadge player={player} size="h-9 w-9" text="text-xs" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-black">{player.name}</div>
+                <div className="text-[11px] md3-subtle">比分 {player.exactCount} 次 · 净胜球 {player.netGoalOnlyCount} 次</div>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-black text-[color:var(--md-sys-color-primary)]">{player.total}</div>
+                <div className="text-[11px] md3-subtle">仅中胜负 {player.outcomeOnlyCount}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="hidden space-y-3 md:block">
         {rankings.map((player, index) => {
           const isCurrent = player.id === currentPlayerId;
           return (
@@ -3451,11 +3610,11 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
   const leaderMeta = getCampMeta(campBattleSummary.leaderCampId);
 
   return (
-    <section className="mt-6 space-y-5">
-      <Card>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <section className="mt-6 space-y-4 sm:space-y-5">
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 className="text-3xl font-black">阵营对抗赛</h2>
+            <h2 className="text-[1.45rem] font-black sm:text-3xl">阵营对抗赛</h2>
           </div>
           <div className="flex flex-wrap gap-2">
             <Pill>已结算 {settledCount} 场</Pill>
@@ -3464,30 +3623,30 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
         </div>
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
-        <Card className={`bg-gradient-to-br ${leftCamp.meta.panel} ${leftCamp.meta.glow}`}>
-          <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-[1.2fr_1fr] xl:gap-5">
+        <Card className={`bg-gradient-to-br !p-3.5 sm:!p-5 ${leftCamp.meta.panel} ${leftCamp.meta.glow}`}>
+          <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
             <div>
-              <h3 className="text-2xl font-black">{leftCamp.meta.name}</h3>
-              <p className="text-sm text-slate-400">{leftCamp.memberCount} 人参战</p>
+              <h3 className="text-base font-black sm:text-2xl">{leftCamp.meta.name}</h3>
+              <p className="text-[11px] text-slate-400 sm:text-sm">{leftCamp.memberCount} 人参战</p>
             </div>
             <CampBadge campId="A" />
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
             <StatTile label="阵营总分" value={`${leftCamp.total}分`} />
             <StatTile label="阵营平均分" value={`${leftCamp.average.toFixed(1).replace(/\.0$/, "")}分`} />
             <StatTile label="人均参与" value={`${leftCamp.playedAverage.toFixed(1).replace(/\.0$/, "")}场`} />
           </div>
         </Card>
-        <Card className={`bg-gradient-to-br ${rightCamp.meta.panel} ${rightCamp.meta.glow}`}>
-          <div className="mb-4 flex items-center justify-between gap-3">
+        <Card className={`bg-gradient-to-br !p-3.5 sm:!p-5 ${rightCamp.meta.panel} ${rightCamp.meta.glow}`}>
+          <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
             <div>
-              <h3 className="text-2xl font-black">{rightCamp.meta.name}</h3>
-              <p className="text-sm text-slate-400">{rightCamp.memberCount} 人参战</p>
+              <h3 className="text-base font-black sm:text-2xl">{rightCamp.meta.name}</h3>
+              <p className="text-[11px] text-slate-400 sm:text-sm">{rightCamp.memberCount} 人参战</p>
             </div>
             <CampBadge campId="B" />
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
             <StatTile label="阵营总分" value={`${rightCamp.total}分`} />
             <StatTile label="阵营平均分" value={`${rightCamp.average.toFixed(1).replace(/\.0$/, "")}分`} />
             <StatTile label="人均参与" value={`${rightCamp.playedAverage.toFixed(1).replace(/\.0$/, "")}场`} />
@@ -3548,7 +3707,7 @@ function CampBattlePanel({ campBattleSummary, settledCount }) {
 }
 
 function StatTile({ label, value }) {
-  return <div className="md3-panel-inset p-4"><div className="text-sm text-slate-400">{label}</div><div className="mt-2 text-2xl font-black">{value}</div></div>;
+  return <div className="md3-panel-inset p-3 sm:p-4"><div className="text-[11px] text-slate-400 sm:text-sm">{label}</div><div className="mt-1.5 text-lg font-black sm:mt-2 sm:text-2xl">{value}</div></div>;
 }
 
 function CampDuelCard({ duel }) {
@@ -3871,31 +4030,49 @@ function RulesPanel() {
       title: "截止时间说明",
       description: "所有截止逻辑都以比赛开球时间和系统锁定状态为准。",
       content: (
-        <div className="overflow-x-auto rounded-[24px] border md3-divider">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
-              <tr>
-                <th className="px-4 py-3">阶段</th>
-                <th className="px-4 py-3">倍率</th>
-                <th className="px-4 py-3">完全比分</th>
-                <th className="px-4 py-3">胜平负+净胜球</th>
-                <th className="px-4 py-3">只中胜平负</th>
-                <th className="px-4 py-3">猜错</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(STAGES).map(([key, value]) => (
-                <tr key={key} className="border-t md3-divider">
-                  <td className="px-4 py-4 font-black">{value.label}</td>
-                  <td className="px-4 py-4">x{value.multiplier}</td>
-                  <td className="px-4 py-4">{4 * value.multiplier}分</td>
-                  <td className="px-4 py-4">{2 * value.multiplier}分</td>
-                  <td className="px-4 py-4">{1 * value.multiplier}分</td>
-                  <td className="px-4 py-4">0分</td>
+        <div>
+          <div className="space-y-3 md:hidden">
+            {Object.entries(STAGES).map(([key, value]) => (
+              <div key={`${key}-mobile`} className="md3-panel-inset p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-black">{value.label}</div>
+                  <Pill>x{value.multiplier}</Pill>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="md3-panel px-3 py-2">完全比分：<span className="font-black">{4 * value.multiplier}分</span></div>
+                  <div className="md3-panel px-3 py-2">净胜+胜负：<span className="font-black">{2 * value.multiplier}分</span></div>
+                  <div className="md3-panel px-3 py-2">只中胜负：<span className="font-black">{1 * value.multiplier}分</span></div>
+                  <div className="md3-panel px-3 py-2">猜错：<span className="font-black">0分</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto rounded-[24px] border md3-divider">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+                <tr>
+                  <th className="px-4 py-3">阶段</th>
+                  <th className="px-4 py-3">倍率</th>
+                  <th className="px-4 py-3">完全比分</th>
+                  <th className="px-4 py-3">胜平负+净胜球</th>
+                  <th className="px-4 py-3">只中胜平负</th>
+                  <th className="px-4 py-3">猜错</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {Object.entries(STAGES).map(([key, value]) => (
+                  <tr key={key} className="border-t md3-divider">
+                    <td className="px-4 py-4 font-black">{value.label}</td>
+                    <td className="px-4 py-4">x{value.multiplier}</td>
+                    <td className="px-4 py-4">{4 * value.multiplier}分</td>
+                    <td className="px-4 py-4">{2 * value.multiplier}分</td>
+                    <td className="px-4 py-4">{1 * value.multiplier}分</td>
+                    <td className="px-4 py-4">0分</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ),
     },

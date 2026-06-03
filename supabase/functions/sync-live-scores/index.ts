@@ -16,6 +16,23 @@ type LiveStateRow = {
   regulation_final_available: boolean | null;
 };
 
+class WorldCupProviderError extends Error {
+  status: number | null;
+  endpoint: "fixtures" | "livescores";
+  errorType: string;
+
+  constructor(
+    message: string,
+    options: { status?: number | null; endpoint: "fixtures" | "livescores"; errorType: string },
+  ) {
+    super(message);
+    this.name = "WorldCupProviderError";
+    this.status = options.status ?? null;
+    this.endpoint = options.endpoint;
+    this.errorType = options.errorType;
+  }
+}
+
 const WORLDCUP_FIXTURES_URL = "https://api.worldcupapi.com/fixtures";
 const WORLDCUP_LIVE_SCORES_URL = "https://api.worldcupapi.com/livescores";
 const REGULATION_BUFFER_MINUTES = 10;
@@ -116,23 +133,84 @@ function toUtcIso(dateText: string, timeText: string) {
   return new Date(Date.UTC(year, month - 1, day, hour, minute, second)).toISOString();
 }
 
-async function fetchAllFixtures(apiKey: string): Promise<NormalizedFixture[]> {
-  const fixtures: Record<string, unknown>[] = [];
+async function extractProviderErrorDetail(response: Response) {
+  try {
+    const rawText = await response.text();
+    if (!rawText) return "";
 
-  for (let page = 1; page <= 10; page += 1) {
-    const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(apiKey)}&page=${page}`);
-    if (!response.ok) throw new Error(`Fixtures request failed: ${response.status}`);
-    const payload = await response.json();
-    if (!Array.isArray(payload) || payload.length === 0) break;
-    fixtures.push(...payload);
+    try {
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      const detail = parsed.error ?? parsed.message ?? parsed.code ?? rawText;
+      return String(detail).trim().slice(0, 200);
+    } catch {
+      return rawText.trim().slice(0, 200);
+    }
+  } catch {
+    return "";
+  }
+}
+
+async function buildProviderError(response: Response, endpoint: "fixtures" | "livescores") {
+  const detail = await extractProviderErrorDetail(response);
+  const status = response.status;
+  const errorType = status === 401 ? "provider_auth_failed" : status >= 500 ? "provider_upstream_error" : "provider_http_error";
+  const baseMessage = status === 401
+    ? `WorldCupAPI ${endpoint} unauthorized (401)`
+    : `WorldCupAPI ${endpoint} request failed (${status})`;
+
+  return new WorldCupProviderError(
+    detail ? `${baseMessage}: ${detail}` : baseMessage,
+    { status, endpoint, errorType },
+  );
+}
+
+function normalizeProviderError(error: unknown, endpoint: "fixtures" | "livescores") {
+  if (error instanceof WorldCupProviderError) return error;
+  if (error instanceof TypeError) {
+    return new WorldCupProviderError(
+      `WorldCupAPI ${endpoint} network request failed`,
+      { status: null, endpoint, errorType: "provider_network_error" },
+    );
+  }
+  if (error instanceof Error) {
+    return new WorldCupProviderError(
+      error.message,
+      { status: null, endpoint, errorType: "provider_unknown_error" },
+    );
+  }
+  return new WorldCupProviderError(
+    `WorldCupAPI ${endpoint} request failed`,
+    { status: null, endpoint, errorType: "provider_unknown_error" },
+  );
+}
+
+async function fetchAllFixtures(apiKey: string): Promise<{ fixtures: NormalizedFixture[]; pagesFetched: number }> {
+  const fixtures: Record<string, unknown>[] = [];
+  let pagesFetched = 0;
+
+  try {
+    for (let page = 1; page <= 10; page += 1) {
+      const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(apiKey)}&page=${page}`);
+      if (!response.ok) throw await buildProviderError(response, "fixtures");
+
+      const payload = await response.json();
+      if (!Array.isArray(payload) || payload.length === 0) break;
+      fixtures.push(...payload);
+      pagesFetched += 1;
+    }
+  } catch (error) {
+    throw normalizeProviderError(error, "fixtures");
   }
 
-  return fixtures.map((fixture) => ({
-    fixtureId: String(fixture.id),
-    matchId: String(fixture.id),
-    resultId: Number(fixture.id),
-    kickoff: toUtcIso(String(fixture.date), String(fixture.time || "00:00:00")),
-  }));
+  return {
+    fixtures: fixtures.map((fixture) => ({
+      fixtureId: String(fixture.id),
+      matchId: String(fixture.id),
+      resultId: Number(fixture.id),
+      kickoff: toUtcIso(String(fixture.date), String(fixture.time || "00:00:00")),
+    })),
+    pagesFetched,
+  };
 }
 
 function shouldTrackFixture(fixture: NormalizedFixture, liveRow: LiveStateRow | undefined, now: Date) {
@@ -165,19 +243,20 @@ Deno.serve(async (req) => {
   });
 
   try {
-    const [fixtures, liveResponse, liveStateResult] = await Promise.all([
+    const [fixtureResult, liveResponse, liveStateResult] = await Promise.all([
       fetchAllFixtures(worldCupApiKey),
       fetch(`${WORLDCUP_LIVE_SCORES_URL}?key=${encodeURIComponent(worldCupApiKey)}`),
       supabase.from("live_match_states").select("match_id, fixture_id, tracking_until, regulation_final_available"),
     ]);
 
-    if (!liveResponse.ok) throw new Error(`Live scores request failed: ${liveResponse.status}`);
+    if (!liveResponse.ok) throw await buildProviderError(liveResponse, "livescores");
     if (liveStateResult.error) throw liveStateResult.error;
 
     const livePayload = await liveResponse.json();
     const liveItems = Array.isArray(livePayload) ? livePayload : [];
     const liveByFixtureId = new Map(liveItems.map((item) => [String((item as Record<string, unknown>).fixture_id ?? (item as Record<string, unknown>).id), item as Record<string, unknown>]));
     const existingLiveRows = new Map((liveStateResult.data || []).map((row) => [row.match_id, row as LiveStateRow]));
+    const fixtures = fixtureResult.fixtures;
     const now = new Date();
 
     let trackedCount = 0;
@@ -260,6 +339,12 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       ok: true,
+      provider: "worldcupapi",
+      providerStatus: {
+        fixtures: 200,
+        livescores: liveResponse.status,
+      },
+      fixturesPagesFetched: fixtureResult.pagesFetched,
       trackedCount,
       refreshedCount,
       regulationSettledCount,
@@ -268,8 +353,24 @@ Deno.serve(async (req) => {
       syncedAt: now.toISOString(),
     });
   } catch (error) {
+    if (error instanceof WorldCupProviderError) {
+      const status = error.errorType === "provider_auth_failed" ? 401 : 502;
+      return jsonResponse({
+        ok: false,
+        provider: "worldcupapi",
+        errorType: error.errorType,
+        endpoint: error.endpoint,
+        statusCode: error.status,
+        error: error.message,
+        syncedAt: new Date().toISOString(),
+      }, status);
+    }
+
     return jsonResponse({
+      ok: false,
       error: error instanceof Error ? error.message : "Unexpected sync-live-scores failure",
+      errorType: "internal_error",
+      syncedAt: new Date().toISOString(),
     }, 500);
   }
 });

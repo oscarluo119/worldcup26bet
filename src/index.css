@@ -103,7 +103,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at top left, rgba(240, 207, 99, 0.16), transparent 22%),
     radial-gradient(circle at top right, rgba(64, 160, 110, 0.12), transparent 28%),
@@ -164,7 +164,7 @@ textarea {
 
 @layer components {
   .md3-app {
-    @apply min-h-screen;
+    @apply min-h-[100dvh];
     color: var(--md-sys-color-on-background);
   }
 
@@ -397,10 +397,12 @@ textarea {
   }
 
   .md3-bottom-nav {
-    @apply fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t px-2 py-2 lg:hidden;
+    @apply fixed inset-x-0 bottom-0 z-40 flex items-center justify-around gap-1 border-t px-2 pt-2 lg:hidden;
+    padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
     background: color-mix(in srgb, var(--md-sys-color-surface-container) 94%, transparent);
     border-color: color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent);
     backdrop-filter: blur(18px);
+    box-shadow: 0 -12px 30px rgba(var(--md-sys-color-shadow), 0.12);
   }
 
   .md3-hero {
@@ -485,5 +487,28 @@ textarea {
     border-color: color-mix(in srgb, var(--md-sys-color-outline-variant) 62%, transparent);
     background: color-mix(in srgb, var(--md-sys-color-surface-container-highest) 96%, transparent);
     box-shadow: var(--md-shadow-3);
+  }
+
+  @media (max-width: 640px) {
+    .md3-section-title {
+      font-size: 1.3rem;
+      line-height: 1.2;
+    }
+
+    .md3-chip {
+      min-height: 28px;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.7rem;
+    }
+
+    .md3-button {
+      min-height: 40px;
+      padding: 0.55rem 0.9rem;
+    }
+
+    .md3-bottom-nav {
+      padding-top: 0.45rem;
+      padding-bottom: calc(0.45rem + env(safe-area-inset-bottom, 0px));
+    }
   }
 }
