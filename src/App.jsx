@@ -791,7 +791,6 @@ const tabs = [
   { id: "completeSchedule", label: "完整赛程", icon: CalendarDays },
   { id: "worldCupStandings", label: "世界杯排名", icon: Medal },
   { id: "ranking", label: "竞猜排行榜", icon: Trophy },
-  { id: "campBattle", label: "阵营对抗赛", icon: Users },
   { id: "fun", label: "趣味预测", icon: Flame },
   { id: "achievements", label: "成就墙", icon: Crown },
   { id: "rules", label: "规则", icon: ShieldCheck },
@@ -2357,7 +2356,6 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
-          {activeTab === "campBattle" && <CampBattlePanel campBattleSummary={campBattleSummary} settledCount={settledCount} />}
           {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
@@ -3146,36 +3144,6 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
         <StatCard icon={Flame} label="最高连胜" value={`${maxStreak}场`} sub="连续命中胜平负" compact />
       </div>
 
-      <Card className={playerCamp ? `${playerCamp.card} ${playerCamp.glow}` : CARD_TONE.default}>
-        <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-          <div>
-            <h3 className="text-xl font-black">阵营贡献</h3>
-          </div>
-          <Pill className={playerCamp ? playerCamp.pill : ""}>{getCampDisplayName(player.campId)}</Pill>
-        </div>
-        {playerCamp && campStats ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <div className="md3-panel-inset p-4">
-              <div className="text-sm text-slate-400">阵营内总分排名</div>
-              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{campRank + 1}</div>
-              <div className="mt-1 text-xs text-slate-500">共 {campStats.memberCount} 人</div>
-            </div>
-            <div className="md3-panel-inset p-4">
-              <div className="text-sm text-slate-400">阵营内完全比分排名</div>
-              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>#{exactCampRank + 1}</div>
-              <div className="mt-1 text-xs text-slate-500">命中 {ranking.exactCount || 0} 次</div>
-            </div>
-            <div className="md3-panel-inset p-4">
-              <div className="text-sm text-slate-400">对阵营贡献</div>
-              <div className={`mt-2 text-3xl font-black ${playerCamp.accent}`}>{ranking.total || 0}分</div>
-              <div className="mt-1 text-xs text-slate-500">占阵营总分 {campStats.total ? `${Math.round(((ranking.total || 0) / campStats.total) * 100)}%` : "0%"}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">管理员还没有把这位玩家分配到阵营。</div>
-        )}
-      </Card>
-
       <div className="grid gap-5 lg:grid-cols-3">
         <Card>
           <h3 className="mb-4 text-xl font-black">预测风格</h3>
@@ -3864,7 +3832,6 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
 
   return (
     <section className="mt-6 space-y-5">
-      <AdminCampAssignmentCard players={players} onSetUserCamp={onSetUserCamp} />
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
       <Card>
         <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
