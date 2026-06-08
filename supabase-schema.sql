@@ -302,6 +302,56 @@ $$;
 
 grant execute on function public.admin_set_user_camp(uuid, text) to authenticated;
 
+create or replace function public.admin_set_user_admin(
+  p_user_id uuid,
+  p_is_admin boolean
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_profile public.profiles;
+  admin_count bigint;
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  if coalesce(p_is_admin, false) = false then
+    select count(*)
+    into admin_count
+    from public.profiles
+    where is_admin = true;
+
+    if admin_count <= 1 then
+      perform 1
+      from public.profiles
+      where id = p_user_id
+        and is_admin = true;
+
+      if found then
+        raise exception 'At least one admin account must remain';
+      end if;
+    end if;
+  end if;
+
+  update public.profiles
+  set is_admin = coalesce(p_is_admin, false)
+  where id = p_user_id
+  returning * into updated_profile;
+
+  if updated_profile.id is null then
+    raise exception 'Profile not found';
+  end if;
+
+  return updated_profile;
+end;
+$$;
+
+grant execute on function public.admin_set_user_admin(uuid, boolean) to authenticated;
+
 drop policy if exists "predictions readable by signed in users" on public.predictions;
 create policy "predictions readable by signed in users"
 on public.predictions for select
@@ -385,7 +435,7 @@ to authenticated
 using (public.is_admin())
 with check (public.is_admin());
 
--- Run this after oscarluo119@gmail.com has registered.
+-- Bootstrap an initial admin after signup, then manage additional admins in-app.
 update public.profiles
 set is_admin = true
 where lower(email) = 'oscarluo119@gmail.com';

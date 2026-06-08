@@ -52,6 +52,7 @@ import {
   getAchievementBadgeClass,
   getAchievementTheme,
 } from "./achievements";
+import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { getFlagRenderData } from "./lib/flags";
 
 const STAGES = {
@@ -1951,6 +1952,10 @@ export default function WorldCupPredictionMVP() {
     setFunResults(mapFunResults(funResultsResult.data));
   }
 
+  async function refreshSupabaseData() {
+    await loadSupabaseData(baseMatchesRef.current);
+  }
+
   React.useEffect(() => {
     let cancelled = false;
     async function bootstrapData() {
@@ -2010,7 +2015,7 @@ export default function WorldCupPredictionMVP() {
     let stopped = false;
     const timer = window.setInterval(async () => {
       try {
-        await loadSupabaseData(baseMatchesRef.current);
+        await refreshSupabaseData();
       } catch (error) {
         if (!stopped) {
           setDataError((prev) => prev || error.message || "实时比分刷新失败");
@@ -2330,6 +2335,22 @@ export default function WorldCupPredictionMVP() {
     return true;
   }
 
+  async function setUserAdmin(userId, nextIsAdmin) {
+    if (!isAdmin || !userId) return false;
+    const { error } = await supabase.rpc("admin_set_user_admin", {
+      p_user_id: userId,
+      p_is_admin: nextIsAdmin,
+    });
+    if (error) {
+      setDataError(error.message);
+      openSnackbar(error.message, "error");
+      return false;
+    }
+    await refreshSupabaseData();
+    openSnackbar(nextIsAdmin ? "管理员已添加" : "管理员权限已取消");
+    return true;
+  }
+
   function openPlayerProfile(playerId) {
     setSelectedProfilePlayerId(playerId);
     setActiveTab("playerProfile");
@@ -2370,7 +2391,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} openDialog={openDialog} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -3831,7 +3852,90 @@ function AdminCampAssignmentCard({ players, onSetUserCamp }) {
   );
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp, openDialog }) {
+function AdminAccountManagementCard({ players, onSetUserAdmin }) {
+  const [query, setQuery] = useState("");
+  const [savingUserId, setSavingUserId] = useState("");
+  const currentAdmins = getCurrentAdmins(players);
+  const adminCandidates = getAdminCandidates(players, query).slice(0, 12);
+
+  async function handlePromote(userId) {
+    setSavingUserId(userId);
+    await onSetUserAdmin?.(userId, true);
+    setSavingUserId("");
+  }
+
+  async function handleRevoke(player) {
+    const label = player.name || player.email || "该用户";
+    const confirmed = window.confirm(`确认取消 ${label} 的管理员权限吗？`);
+    if (!confirmed) return;
+    setSavingUserId(player.id);
+    await onSetUserAdmin?.(player.id, false);
+    setSavingUserId("");
+  }
+
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-black">管理员账号</h2>
+          <p className="mt-1 text-sm text-slate-400">在后台直接授予或取消管理员权限，系统会自动阻止移除最后一个管理员。</p>
+        </div>
+        <Pill className="bg-slate-800 text-slate-300">当前 {currentAdmins.length} 位管理员</Pill>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="rounded-3xl border border-slate-700 bg-slate-950/70 p-4">
+          <div className="mb-3 text-sm font-bold text-white">当前管理员</div>
+          <div className="space-y-3">
+            {currentAdmins.length ? currentAdmins.map((player) => (
+              <div key={player.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-700 px-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-white">{player.name || "未命名用户"}</div>
+                  <div className="truncate text-xs text-slate-400">{player.email || "未填写邮箱"}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-rose-400/30 px-3 py-1 text-xs font-semibold text-rose-200 disabled:opacity-50"
+                  disabled={savingUserId === player.id}
+                  onClick={() => handleRevoke(player)}
+                >
+                  取消权限
+                </button>
+              </div>
+            )) : <div className="rounded-2xl bg-slate-900 px-4 py-5 text-center text-sm text-slate-500">当前还没有可显示的管理员账号。</div>}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-slate-700 bg-slate-950/70 p-4">
+          <div className="mb-3 text-sm font-bold text-white">添加管理员</div>
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索邮箱或昵称" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500" />
+          </div>
+          <div className="mt-3 space-y-3">
+            {adminCandidates.length ? adminCandidates.map((player) => (
+              <div key={player.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-700 px-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-white">{player.name || "未命名用户"}</div>
+                  <div className="truncate text-xs text-slate-400">{player.email || "未填写邮箱"}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                  disabled={savingUserId === player.id}
+                  onClick={() => handlePromote(player.id)}
+                >
+                  设为管理员
+                </button>
+              </div>
+            )) : <div className="rounded-2xl bg-slate-900 px-4 py-5 text-center text-sm text-slate-500">没有匹配的普通用户，先让对方完成注册登录。</div>}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp, onSetUserAdmin, openDialog }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
   const normalizedQuery = adminQuery.trim().toLowerCase();
@@ -3847,6 +3951,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
   return (
     <section className="mt-6 space-y-5">
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
+      <AdminAccountManagementCard players={players} onSetUserAdmin={onSetUserAdmin} />
       <Card>
         <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
