@@ -52,6 +52,7 @@ import {
   getAchievementBadgeClass,
   getAchievementTheme,
 } from "./achievements";
+import { getFlagRenderData } from "./lib/flags";
 
 const STAGES = {
   GROUP: { label: "小组赛", multiplier: 1 },
@@ -820,9 +821,15 @@ function getWorldCupResultKey(match) {
   return match?.resultId || Number(match?.fixtureId) || Number(match?.id) || match?.no;
 }
 
-function TeamLogo({ logo, name, size = "h-6 w-6" }) {
-  if (!logo) return <span className={`inline-flex ${size} items-center justify-center rounded-full bg-slate-800 text-xs text-slate-400`}>?</span>;
-  return <img src={logo} alt={`${name} logo`} className={`${size} rounded-full bg-slate-900 object-contain`} loading="lazy" />;
+function TeamLogo({ logo, name, size = "h-4 w-6" }) {
+  const flag = getFlagRenderData({
+    teamName: name,
+    fallbackEmoji: TEAM_FLAGS[name] || "",
+    alt: `${name} flag`,
+  });
+  if (flag.type === "image") return <img src={flag.src} alt={flag.alt} className={`${size} object-cover`} loading="lazy" />;
+  if (flag.type === "emoji") return <span className={`inline-flex ${size} items-center justify-center text-xs`}>{flag.emoji}</span>;
+  return <span className={`inline-flex ${size} items-center justify-center text-xs text-slate-400`}>?</span>;
 }
 
 function TeamName({ name, logo, className = "" }) {
@@ -1545,8 +1552,15 @@ function AvatarBadge({ children, size = "h-10 w-10", text = "text-xl" }) {
 }
 
 function FlagIcon({ team, className = "", alt = "" }) {
-  if (!team?.countryCode) return <span className={cn("emoji-glyph", className)}>{team?.flagEmoji || "🏳️"}</span>;
-  return <img src={`https://flagcdn.com/${team.countryCode}.svg`} alt={alt || team.displayNameZh} className={className} loading="lazy" />;
+  const flag = getFlagRenderData({
+    teamName: team?.displayNameZh || team?.teamName || "",
+    countryCode: team?.countryCode || "",
+    fallbackEmoji: team?.flagEmoji || "",
+    alt: alt || team?.displayNameZh || team?.teamName || "",
+  });
+  if (flag.type === "image") return <img src={flag.src} alt={flag.alt} className={className} loading="lazy" />;
+  if (flag.type === "emoji") return <span className={cn("emoji-glyph", className)}>{flag.emoji}</span>;
+  return <span className={cn("emoji-glyph", className)}>🏳️</span>;
 }
 
 function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
@@ -1554,7 +1568,7 @@ function UserBadge({ player, size = "h-10 w-10", text = "text-sm" }) {
   const favoriteTeam = FAVORITE_TEAM_BY_EMOJI[player?.avatarEmoji];
   return (
     <div className={`flex ${size} shrink-0 items-center justify-center rounded-[20px] border ${text} font-black`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "linear-gradient(135deg, color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent), color-mix(in srgb, var(--md-sys-color-tertiary-container) 55%, transparent))", color: "var(--md-sys-color-on-primary-container)" }}>
-      {favoriteTeam ? <FlagIcon team={favoriteTeam} alt={favoriteTeam.displayNameZh} className="h-[1.2em] w-[1.6em] rounded-[3px] object-cover shadow-sm" /> : player?.avatarEmoji ? <span className="emoji-glyph leading-none">{player.avatarEmoji}</span> : label || <User className="h-4 w-4" />}
+      {favoriteTeam ? <FlagIcon team={favoriteTeam} alt={favoriteTeam.displayNameZh} className="h-[1.2em] w-[1.6em] object-cover" /> : player?.avatarEmoji ? <span className="emoji-glyph leading-none">{player.avatarEmoji}</span> : label || <User className="h-4 w-4" />}
     </div>
   );
 }
@@ -1585,7 +1599,7 @@ function EmojiPicker({ value, onChange, disabled = false }) {
             aria-label={`选择 ${team.displayNameZh} 作为支持球队头像`}
             title={team.displayNameZh}
           >
-            <FlagIcon team={team} alt={team.displayNameZh} className="h-6 w-9 rounded-[4px] object-cover shadow-sm sm:h-7 sm:w-10" />
+            <FlagIcon team={team} alt={team.displayNameZh} className="h-6 w-9 object-cover sm:h-7 sm:w-10" />
             <span className="mt-1.5 text-[11px] font-bold leading-tight text-slate-200 sm:mt-2 sm:text-xs">{team.displayNameZh}</span>
           </button>
         );
