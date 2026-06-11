@@ -4,7 +4,7 @@
 
 - 前端部署在 Vercel
 - `cron-job.org` 负责定时触发
-- Supabase Edge Function `sync-live-scores` 负责同步 WorldCupAPI 的实时比分
+- Supabase Edge Function `sync-live-scores` 负责同步 FIFA 比分
 
 ## 任务配置
 
@@ -38,15 +38,13 @@
 `sync-live-scores` 至少依赖下面几个变量：
 
 - `LIVE_SYNC_SECRET`
-- `WORLDCUP_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 说明：
 
-- 前端使用的是 `VITE_WORLDCUP_API_KEY`
-- Edge Function 应单独维护 `WORLDCUP_API_KEY`
-- 不建议只在前端环境里更新 key，否则 cron 会继续拿旧 key 请求 WorldCupAPI
+- FIFA 当前同步链路不依赖 `WORLDCUP_API_KEY`。
+- 若本地要执行 `bootstrap-fifa-mappings.mjs --write`，也需要同一套 Supabase 写入凭据。
 
 ## 测试通过标准
 
@@ -55,49 +53,43 @@
 ```json
 {
   "ok": true,
-  "provider": "worldcupapi",
+  "provider": "fifa",
   "providerStatus": {
-    "fixtures": 200,
-    "livescores": 200
+    "matches": 200
   },
-  "fixturesPagesFetched": 1,
+  "fifaMatchCount": 104,
+  "mappingCount": 104,
+  "matchedMappingCount": 104,
+  "unmappedProviderMatches": 0,
   "trackedCount": 0,
   "refreshedCount": 0,
   "regulationSettledCount": 0,
   "regulationCorrectedCount": 0,
-  "liveFeedCount": 0,
-  "syncedAt": "2026-05-24T00:00:00.000Z"
+  "manualProtectedCount": 0,
+  "syncedAt": "2026-06-11T00:00:00.000Z"
 }
 ```
 
-如果当前没有直播比赛，`trackedCount` 或 `liveFeedCount` 为 `0` 是正常现象。
+如果当前没有进入同步窗口的比赛，`trackedCount` 和 `refreshedCount` 为 `0` 是正常现象。
 
-## 401 Unauthorized 排障
+## 失败排查
 
 如果返回类似下面的响应：
 
 ```json
 {
   "ok": false,
-  "provider": "worldcupapi",
-  "errorType": "provider_auth_failed",
-  "endpoint": "fixtures",
-  "statusCode": 401,
-  "error": "WorldCupAPI fixtures unauthorized (401)",
-  "syncedAt": "2026-06-03T00:00:00.000Z"
+  "provider": "fifa",
+  "errorType": "provider_http_error",
+  "statusCode": 403,
+  "error": "FIFA matches request failed (403)",
+  "syncedAt": "2026-06-11T00:00:00.000Z"
 }
 ```
 
-表示 WorldCupAPI 鉴权失败。此时函数会停止同步，并且不会继续写入：
+优先检查：
 
-- `live_match_states`
-- `match_overrides`
-- `world_cup_results`
-
-排查步骤：
-
-1. 登录 WorldCupAPI dashboard 检查试用或订阅是否过期。
-2. 确认 key 仍有效，必要时重新生成。
-3. 更新 Supabase Edge Function 中的 `WORLDCUP_API_KEY`。
-4. 如果前端也依赖新的 key，同时更新 Vercel 的 `VITE_WORLDCUP_API_KEY`。
-5. 重新部署或重新设置 secrets 后再次触发测试请求。
+1. FIFA `calendar/matches` 当前是否可访问。
+2. Supabase Edge Function 中的 `LIVE_SYNC_SECRET`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY` 是否齐全。
+3. `match_provider_mappings` 是否已经初始化，且存在 `mapping_status = matched` 的记录。
+4. 若是空数据或单场无法对上，重新执行映射初始化脚本并检查 `needs_review` 项。

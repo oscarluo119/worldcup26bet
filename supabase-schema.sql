@@ -75,6 +75,24 @@ create table if not exists public.live_match_states (
 create index if not exists idx_live_match_states_fixture_id on public.live_match_states(fixture_id);
 create index if not exists idx_live_match_states_tracking_until on public.live_match_states(tracking_until);
 
+create table if not exists public.match_provider_mappings (
+  match_id text not null,
+  match_no integer not null,
+  provider text not null check (provider in ('fifa')),
+  provider_match_id text,
+  provider_home_team_id text,
+  provider_away_team_id text,
+  mapping_status text not null default 'matched' check (mapping_status in ('matched', 'needs_review')),
+  verification_notes text,
+  last_verified_at timestamptz,
+  updated_at timestamptz not null default now(),
+  primary key (match_id, provider),
+  unique (provider, provider_match_id),
+  unique (match_no, provider)
+);
+
+create index if not exists idx_match_provider_mappings_provider_status on public.match_provider_mappings(provider, mapping_status);
+
 insert into public.fun_results (id)
 values ('main')
 on conflict (id) do nothing;
@@ -86,6 +104,7 @@ alter table public.match_overrides enable row level security;
 alter table public.world_cup_results enable row level security;
 alter table public.fun_results enable row level security;
 alter table public.live_match_states enable row level security;
+alter table public.match_provider_mappings enable row level security;
 
 create or replace function public.is_admin()
 returns boolean

@@ -1,12 +1,19 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  FIFA_MATCHES_URL,
+  FIFA_REQUEST_HEADERS,
+  FIFA_WORLD_CUP_2026_SEASON_ID,
+  normalizeFifaMatch,
+  shouldSettleFifaResult,
+} from "../../../src/lib/fifaSync.js";
 
 type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
 
-type NormalizedFixture = {
-  fixtureId: string;
-  matchId: string;
-  resultId: number;
-  kickoff: string;
+type MappingRow = {
+  match_id: string;
+  match_no: number;
+  provider_match_id: string | null;
+  mapping_status: "matched" | "needs_review";
 };
 
 type LiveStateRow = {
@@ -14,27 +21,29 @@ type LiveStateRow = {
   fixture_id: string | null;
   tracking_until: string | null;
   regulation_final_available: boolean | null;
+  last_synced_at: string | null;
 };
 
-class WorldCupProviderError extends Error {
+type OverrideRow = {
+  match_id: string;
+  status: "open" | "closed" | "settled";
+  home_score: number | null;
+  away_score: number | null;
+  updated_at: string | null;
+};
+
+class FifaProviderError extends Error {
   status: number | null;
-  endpoint: "fixtures" | "livescores";
   errorType: string;
 
-  constructor(
-    message: string,
-    options: { status?: number | null; endpoint: "fixtures" | "livescores"; errorType: string },
-  ) {
+  constructor(message: string, options: { status?: number | null; errorType: string }) {
     super(message);
-    this.name = "WorldCupProviderError";
+    this.name = "FifaProviderError";
     this.status = options.status ?? null;
-    this.endpoint = options.endpoint;
     this.errorType = options.errorType;
   }
 }
 
-const WORLDCUP_FIXTURES_URL = "https://api.worldcupapi.com/fixtures";
-const WORLDCUP_LIVE_SCORES_URL = "https://api.worldcupapi.com/livescores";
 const REGULATION_BUFFER_MINUTES = 10;
 const PREMATCH_WINDOW_MINUTES = 10;
 const FALLBACK_TRACKING_HOURS = 4;
@@ -46,91 +55,6 @@ function jsonResponse(body: Json, status = 200) {
       "Content-Type": "application/json",
     },
   });
-}
-
-function parseNumericScore(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-  return null;
-}
-
-function parseScorePair(value: unknown): { home: number | null; away: number | null } {
-  if (!value) return { home: null, away: null };
-
-  if (Array.isArray(value) && value.length >= 2) {
-    return {
-      home: parseNumericScore(value[0]),
-      away: parseNumericScore(value[1]),
-    };
-  }
-
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return {
-      home: parseNumericScore(record.home ?? record.home_score ?? record.localteam_score ?? record.h),
-      away: parseNumericScore(record.away ?? record.away_score ?? record.visitorteam_score ?? record.a),
-    };
-  }
-
-  if (typeof value === "string") {
-    const match = value.match(/(\d+)\s*[-:]\s*(\d+)/);
-    if (match) {
-      return {
-        home: Number(match[1]),
-        away: Number(match[2]),
-      };
-    }
-  }
-
-  return { home: null, away: null };
-}
-
-function getNestedScore(source: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    if (key in source) return parseScorePair(source[key]);
-  }
-  return { home: null, away: null };
-}
-
-function parseFullTimeScore(liveItem: Record<string, unknown>) {
-  const scores = (liveItem.scores as Record<string, unknown>) || {};
-  const outcomes = (liveItem.outcomes as Record<string, unknown>) || {};
-
-  const direct = getNestedScore(scores, ["ft_score", "full_time", "fulltime", "full_time_score"]);
-  if (direct.home !== null && direct.away !== null) return direct;
-
-  const outcome = getNestedScore(outcomes, ["full_time", "fulltime", "regulation", "regular_time"]);
-  if (outcome.home !== null && outcome.away !== null) return outcome;
-
-  return { home: null, away: null };
-}
-
-function normalizePhase(status: unknown, time: unknown, hasRegulationFinal: boolean) {
-  const statusText = String(status || "").trim().toUpperCase();
-  const timeText = String(time || "").trim();
-
-  if (!statusText && !timeText) return "pre_match";
-  if (statusText.includes("PEN")) return "penalties";
-  if (statusText.includes("AET") || statusText.includes("ET")) return "extra_time";
-  if (statusText.includes("HT") || timeText.toUpperCase() === "HT") return "half_time";
-  if (statusText.includes("FT") || statusText.includes("FIN")) {
-    return hasRegulationFinal ? "finished" : "full_time_break";
-  }
-  if (statusText.includes("LIVE") || statusText.includes("IN_PLAY")) {
-    if (timeText.includes("90") || timeText.includes("45+") || timeText.includes("90+")) return "second_half";
-    return "first_half";
-  }
-  if (/^\d+\+?\d*'?$/u.test(timeText) || /^\d+$/u.test(timeText)) {
-    return Number.parseInt(timeText, 10) >= 46 ? "second_half" : "first_half";
-  }
-  if (statusText.includes("NS") || statusText.includes("NOT")) return "pre_match";
-  return hasRegulationFinal ? "finished" : "pre_match";
-}
-
-function toUtcIso(dateText: string, timeText: string) {
-  const [year, month, day] = String(dateText).split("-").map(Number);
-  const [hour, minute, second = 0] = String(timeText || "00:00:00").split(":").map(Number);
-  return new Date(Date.UTC(year, month - 1, day, hour, minute, second)).toISOString();
 }
 
 async function extractProviderErrorDetail(response: Response) {
@@ -150,88 +74,90 @@ async function extractProviderErrorDetail(response: Response) {
   }
 }
 
-async function buildProviderError(response: Response, endpoint: "fixtures" | "livescores") {
+async function buildProviderError(response: Response) {
   const detail = await extractProviderErrorDetail(response);
   const status = response.status;
-  const errorType = status === 401 ? "provider_auth_failed" : status >= 500 ? "provider_upstream_error" : "provider_http_error";
-  const baseMessage = status === 401
-    ? `WorldCupAPI ${endpoint} unauthorized (401)`
-    : `WorldCupAPI ${endpoint} request failed (${status})`;
+  const errorType = status >= 500 ? "provider_upstream_error" : "provider_http_error";
+  const baseMessage = `FIFA matches request failed (${status})`;
 
-  return new WorldCupProviderError(
+  return new FifaProviderError(
     detail ? `${baseMessage}: ${detail}` : baseMessage,
-    { status, endpoint, errorType },
+    { status, errorType },
   );
 }
 
-function normalizeProviderError(error: unknown, endpoint: "fixtures" | "livescores") {
-  if (error instanceof WorldCupProviderError) return error;
+function normalizeProviderError(error: unknown) {
+  if (error instanceof FifaProviderError) return error;
   if (error instanceof TypeError) {
-    return new WorldCupProviderError(
-      `WorldCupAPI ${endpoint} network request failed`,
-      { status: null, endpoint, errorType: "provider_network_error" },
-    );
+    return new FifaProviderError("FIFA matches network request failed", {
+      status: null,
+      errorType: "provider_network_error",
+    });
   }
   if (error instanceof Error) {
-    return new WorldCupProviderError(
-      error.message,
-      { status: null, endpoint, errorType: "provider_unknown_error" },
-    );
+    return new FifaProviderError(error.message, {
+      status: null,
+      errorType: "provider_unknown_error",
+    });
   }
-  return new WorldCupProviderError(
-    `WorldCupAPI ${endpoint} request failed`,
-    { status: null, endpoint, errorType: "provider_unknown_error" },
-  );
+  return new FifaProviderError("FIFA matches request failed", {
+    status: null,
+    errorType: "provider_unknown_error",
+  });
 }
 
-async function fetchAllFixtures(apiKey: string): Promise<{ fixtures: NormalizedFixture[]; pagesFetched: number }> {
-  const fixtures: Record<string, unknown>[] = [];
-  let pagesFetched = 0;
-
+async function fetchFifaMatches() {
   try {
-    for (let page = 1; page <= 10; page += 1) {
-      const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(apiKey)}&page=${page}`);
-      if (!response.ok) throw await buildProviderError(response, "fixtures");
+    const response = await fetch(
+      `${FIFA_MATCHES_URL}?count=200&idSeason=${FIFA_WORLD_CUP_2026_SEASON_ID}`,
+      { headers: FIFA_REQUEST_HEADERS },
+    );
+    if (!response.ok) throw await buildProviderError(response);
 
-      const payload = await response.json();
-      if (!Array.isArray(payload) || payload.length === 0) break;
-      fixtures.push(...payload);
-      pagesFetched += 1;
+    const payload = await response.json();
+    const results = Array.isArray(payload?.Results) ? payload.Results : [];
+    if (!results.length) {
+      throw new FifaProviderError("FIFA matches returned empty data", {
+        status: response.status,
+        errorType: "provider_empty_data",
+      });
     }
-  } catch (error) {
-    throw normalizeProviderError(error, "fixtures");
-  }
 
-  return {
-    fixtures: fixtures.map((fixture) => ({
-      fixtureId: String(fixture.id),
-      matchId: String(fixture.id),
-      resultId: Number(fixture.id),
-      kickoff: toUtcIso(String(fixture.date), String(fixture.time || "00:00:00")),
-    })),
-    pagesFetched,
-  };
+    return {
+      status: response.status,
+      matches: results.map(normalizeFifaMatch),
+    };
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
 }
 
-function shouldTrackFixture(fixture: NormalizedFixture, liveRow: LiveStateRow | undefined, now: Date) {
+function shouldTrackKickoff(kickoff: string, liveRow: LiveStateRow | undefined, now: Date) {
   if (liveRow?.tracking_until && new Date(liveRow.tracking_until).getTime() > now.getTime()) return true;
 
-  const kickoff = new Date(fixture.kickoff).getTime();
-  const startWindow = kickoff - PREMATCH_WINDOW_MINUTES * 60_000;
-  const fallbackEnd = kickoff + FALLBACK_TRACKING_HOURS * 60 * 60_000;
+  const kickoffTime = new Date(kickoff).getTime();
+  const startWindow = kickoffTime - PREMATCH_WINDOW_MINUTES * 60_000;
+  const fallbackEnd = kickoffTime + FALLBACK_TRACKING_HOURS * 60 * 60_000;
   const nowTime = now.getTime();
   return nowTime >= startWindow && nowTime <= fallbackEnd;
 }
 
+function hasManualSettledOverride(liveRow: LiveStateRow | undefined, overrideRow: OverrideRow | undefined) {
+  if (!overrideRow || overrideRow.status !== "settled") return false;
+  if (overrideRow.home_score === null || overrideRow.away_score === null) return false;
+  if (!overrideRow.updated_at) return false;
+  if (!liveRow?.last_synced_at) return true;
+  return new Date(overrideRow.updated_at).getTime() > new Date(liveRow.last_synced_at).getTime();
+}
+
 Deno.serve(async (req) => {
   const liveSyncSecret = Deno.env.get("LIVE_SYNC_SECRET");
-  const worldCupApiKey = Deno.env.get("WORLDCUP_API_KEY") || Deno.env.get("VITE_WORLDCUP_API_KEY");
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const authHeader = req.headers.get("Authorization") || "";
 
-  if (!liveSyncSecret || !worldCupApiKey || !supabaseUrl || !serviceRoleKey) {
-    return jsonResponse({ error: "Missing LIVE_SYNC_SECRET, WORLDCUP_API_KEY, SUPABASE_URL, or SUPABASE_SERVICE_ROLE_KEY" }, 500);
+  if (!liveSyncSecret || !supabaseUrl || !serviceRoleKey) {
+    return jsonResponse({ error: "Missing LIVE_SYNC_SECRET, SUPABASE_URL, or SUPABASE_SERVICE_ROLE_KEY" }, 500);
   }
 
   if (authHeader !== `Bearer ${liveSyncSecret}`) {
@@ -243,76 +169,101 @@ Deno.serve(async (req) => {
   });
 
   try {
-    const [fixtureResult, liveResponse, liveStateResult] = await Promise.all([
-      fetchAllFixtures(worldCupApiKey),
-      fetch(`${WORLDCUP_LIVE_SCORES_URL}?key=${encodeURIComponent(worldCupApiKey)}`),
-      supabase.from("live_match_states").select("match_id, fixture_id, tracking_until, regulation_final_available"),
+    const [fifaResult, mappingResult, liveStateResult, overrideResult] = await Promise.all([
+      fetchFifaMatches(),
+      supabase
+        .from("match_provider_mappings")
+        .select("match_id, match_no, provider_match_id, mapping_status")
+        .eq("provider", "fifa"),
+      supabase.from("live_match_states").select("match_id, fixture_id, tracking_until, regulation_final_available, last_synced_at"),
+      supabase.from("match_overrides").select("match_id, status, home_score, away_score, updated_at"),
     ]);
 
-    if (!liveResponse.ok) throw await buildProviderError(liveResponse, "livescores");
+    if (mappingResult.error) throw mappingResult.error;
     if (liveStateResult.error) throw liveStateResult.error;
+    if (overrideResult.error) throw overrideResult.error;
 
-    const livePayload = await liveResponse.json();
-    const liveItems = Array.isArray(livePayload) ? livePayload : [];
-    const liveByFixtureId = new Map(liveItems.map((item) => [String((item as Record<string, unknown>).fixture_id ?? (item as Record<string, unknown>).id), item as Record<string, unknown>]));
+    const allMappings = (mappingResult.data || []) as MappingRow[];
+    const matchedMappings = allMappings.filter((row) => row.mapping_status === "matched" && row.provider_match_id);
+    if (!matchedMappings.length) {
+      return jsonResponse({
+        ok: false,
+        provider: "fifa",
+        errorType: "mapping_missing",
+        error: "No matched FIFA mappings found. Run the FIFA mapping bootstrap first.",
+        syncedAt: new Date().toISOString(),
+      }, 500);
+    }
+
+    const fifaByMatchId = new Map(fifaResult.matches.map((match) => [match.providerMatchId, match]));
     const existingLiveRows = new Map((liveStateResult.data || []).map((row) => [row.match_id, row as LiveStateRow]));
-    const fixtures = fixtureResult.fixtures;
+    const existingOverrides = new Map((overrideResult.data || []).map((row) => [row.match_id, row as OverrideRow]));
     const now = new Date();
 
     let trackedCount = 0;
     let refreshedCount = 0;
     let regulationSettledCount = 0;
     let regulationCorrectedCount = 0;
+    let unmappedProviderMatches = 0;
+    let manualProtectedCount = 0;
 
-    for (const fixture of fixtures) {
-      const liveRow = existingLiveRows.get(fixture.matchId);
-      if (!shouldTrackFixture(fixture, liveRow, now)) continue;
+    for (const mapping of matchedMappings) {
+      const fifaMatch = fifaByMatchId.get(String(mapping.provider_match_id));
+      if (!fifaMatch) {
+        unmappedProviderMatches += 1;
+        continue;
+      }
+
+      const liveRow = existingLiveRows.get(mapping.match_id);
+      const overrideRow = existingOverrides.get(mapping.match_id);
+      if (!shouldTrackKickoff(fifaMatch.kickoff, liveRow, now)) continue;
 
       trackedCount += 1;
-      const liveItem = liveByFixtureId.get(fixture.fixtureId);
-      const kickoffTime = new Date(fixture.kickoff).getTime();
-      const hasStarted = now.getTime() >= kickoffTime;
-      const scores = liveItem ? parseScorePair((liveItem.scores as Record<string, unknown>)?.score ?? (liveItem.scores as Record<string, unknown>)?.current) : { home: null, away: null };
-      const fullTime = liveItem ? parseFullTimeScore(liveItem) : { home: null, away: null };
-      const hasRegulationFinal = fullTime.home !== null && fullTime.away !== null;
       const previousRegulationFinal = Boolean(liveRow?.regulation_final_available);
-      const phase = normalizePhase(liveItem?.status, liveItem?.time, hasRegulationFinal);
+      const hasRegulationFinal = shouldSettleFifaResult(fifaMatch);
+      const hasStarted = now.getTime() >= new Date(fifaMatch.kickoff).getTime();
+      const manualProtected = hasManualSettledOverride(liveRow, overrideRow);
       const trackingUntil = new Date(
-        now.getTime() + (phase === "finished" ? REGULATION_BUFFER_MINUTES : 20) * 60_000,
+        now.getTime() + (fifaMatch.phase === "finished" ? REGULATION_BUFFER_MINUTES : 20) * 60_000,
       ).toISOString();
 
       const liveStatePayload = {
-        match_id: fixture.matchId,
-        fixture_id: fixture.fixtureId,
-        display_home_score: scores.home,
-        display_away_score: scores.away,
-        match_phase: phase,
-        match_clock: liveItem?.time ? String(liveItem.time) : null,
-        reg_home_score: fullTime.home,
-        reg_away_score: fullTime.away,
+        match_id: mapping.match_id,
+        fixture_id: fifaMatch.providerMatchId,
+        display_home_score: fifaMatch.homeScore,
+        display_away_score: fifaMatch.awayScore,
+        match_phase: fifaMatch.phase,
+        match_clock: fifaMatch.matchTime || null,
+        reg_home_score: hasRegulationFinal ? fifaMatch.homeScore : null,
+        reg_away_score: hasRegulationFinal ? fifaMatch.awayScore : null,
         regulation_final_available: hasRegulationFinal,
         last_synced_at: now.toISOString(),
         tracking_until: trackingUntil,
         updated_at: now.toISOString(),
       };
 
-      const { error: liveUpsertError } = await supabase.from("live_match_states").upsert(liveStatePayload, { onConflict: "match_id" });
+      const { error: liveUpsertError } = await supabase
+        .from("live_match_states")
+        .upsert(liveStatePayload, { onConflict: "match_id" });
       if (liveUpsertError) throw liveUpsertError;
       refreshedCount += 1;
 
       if (!hasRegulationFinal) {
-        if (hasStarted) {
-          await supabase.from("match_overrides").upsert({
-            match_id: fixture.matchId,
+        if (hasStarted && !manualProtected && !["cancelled", "postponed", "abandoned"].includes(fifaMatch.phase)) {
+          const { error: pendingOverrideError } = await supabase.from("match_overrides").upsert({
+            match_id: mapping.match_id,
             status: "closed",
             home_score: null,
             away_score: null,
             updated_at: now.toISOString(),
           }, { onConflict: "match_id" });
+          if (pendingOverrideError) throw pendingOverrideError;
         }
-        if (!previousRegulationFinal) {
-          await supabase.from("world_cup_results").delete().eq("match_no", fixture.resultId);
-        }
+        continue;
+      }
+
+      if (manualProtected) {
+        manualProtectedCount += 1;
         continue;
       }
 
@@ -320,18 +271,18 @@ Deno.serve(async (req) => {
       else regulationSettledCount += 1;
 
       const { error: resultUpsertError } = await supabase.from("world_cup_results").upsert({
-        match_no: fixture.resultId,
-        home_score: fullTime.home,
-        away_score: fullTime.away,
+        match_no: mapping.match_no,
+        home_score: fifaMatch.homeScore,
+        away_score: fifaMatch.awayScore,
         updated_at: now.toISOString(),
       }, { onConflict: "match_no" });
       if (resultUpsertError) throw resultUpsertError;
 
       const { error: overrideUpsertError } = await supabase.from("match_overrides").upsert({
-        match_id: fixture.matchId,
+        match_id: mapping.match_id,
         status: "settled",
-        home_score: fullTime.home,
-        away_score: fullTime.away,
+        home_score: fifaMatch.homeScore,
+        away_score: fifaMatch.awayScore,
         updated_at: now.toISOString(),
       }, { onConflict: "match_id" });
       if (overrideUpsertError) throw overrideUpsertError;
@@ -339,31 +290,31 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       ok: true,
-      provider: "worldcupapi",
+      provider: "fifa",
       providerStatus: {
-        fixtures: 200,
-        livescores: liveResponse.status,
+        matches: fifaResult.status,
       },
-      fixturesPagesFetched: fixtureResult.pagesFetched,
+      fifaMatchCount: fifaResult.matches.length,
+      mappingCount: allMappings.length,
+      matchedMappingCount: matchedMappings.length,
+      unmappedProviderMatches,
       trackedCount,
       refreshedCount,
       regulationSettledCount,
       regulationCorrectedCount,
-      liveFeedCount: liveItems.length,
+      manualProtectedCount,
       syncedAt: now.toISOString(),
     });
   } catch (error) {
-    if (error instanceof WorldCupProviderError) {
-      const status = error.errorType === "provider_auth_failed" ? 401 : 502;
+    if (error instanceof FifaProviderError) {
       return jsonResponse({
         ok: false,
-        provider: "worldcupapi",
+        provider: "fifa",
         errorType: error.errorType,
-        endpoint: error.endpoint,
         statusCode: error.status,
         error: error.message,
         syncedAt: new Date().toISOString(),
-      }, status);
+      }, 502);
     }
 
     return jsonResponse({

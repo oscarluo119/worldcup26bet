@@ -54,6 +54,7 @@ import {
 } from "./achievements";
 import brandTrophyImage from "./assets/brand-trophy.png";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
+import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
 
 const STAGES = {
@@ -1700,7 +1701,11 @@ function AuthScreen({ onSignedIn }) {
         onSignedIn?.(data.session);
       }
     } catch (authError) {
-      setError(authError.message || "操作失败，请稍后再试");
+      const normalizedAuthError = normalizeAuthError(authError, mode);
+      setError(normalizedAuthError.message);
+      if (normalizedAuthError.nextMode && normalizedAuthError.nextMode !== mode) {
+        setMode(normalizedAuthError.nextMode);
+      }
     } finally {
       setLoading(false);
     }
