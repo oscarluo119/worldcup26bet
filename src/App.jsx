@@ -53,9 +53,22 @@ import {
   getAchievementTheme,
 } from "./achievements";
 import brandTrophyImage from "./assets/brand-trophy.png";
+import { TeamProfileTrigger } from "./components/teamProfileCard";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
+import {
+  FIRST_GOAL_TIME_EVENT_ID,
+  SPONSOR_PREDICTION_EVENTS,
+  formatSponsorPredictionClock,
+  getFirstGoalResolvedMatch,
+  getPlayerSponsorTitles,
+  getSponsorPredictionWinners,
+  getVisiblePredictionPlayers,
+  mapSponsorPredictionResults,
+  mapSponsorPredictions,
+  splitSponsorPredictionClock,
+} from "./lib/sponsorPredictions";
 import { normalizeUserFacingError } from "./lib/userFacingError";
 
 const STAGES = {
@@ -267,6 +280,8 @@ const WORLD_CUP_GOAL_REFERENCES = [
 ];
 
 const emptyFunResults = { champion: "", goldenBoot: "", firstRedCardTeam: "", totalGoals: "" };
+const emptySponsorPredictionResults = {};
+const emptySponsorPredictions = {};
 const FAVORITE_TEAM_OPTIONS = [
   { teamKey: "FRA", teamName: "France", displayNameZh: "法国", flagEmoji: "🇫🇷", countryCode: "fr" },
   { teamKey: "ESP", teamName: "Spain", displayNameZh: "西班牙", flagEmoji: "🇪🇸", countryCode: "es" },
@@ -684,7 +699,6 @@ function mapFunResults(row) {
     totalGoals: row.total_goals ?? "",
   };
 }
-
 function getDisplayName(user, fallback = "未命名用户") {
   return user?.user_metadata?.username || user?.email?.split("@")[0] || fallback;
 }
@@ -692,9 +706,11 @@ function getDisplayName(user, fallback = "未命名用户") {
 const tabs = [
   { id: "home", label: "首页", icon: Home },
   { id: "schedule", label: "赛程竞猜", icon: CalendarDays },
+  { id: "allFeatures", label: "全部功能", icon: Plus },
   { id: "completeSchedule", label: "完整赛程", icon: CalendarDays },
   { id: "worldCupStandings", label: "世界杯排名", icon: Medal },
   { id: "ranking", label: "竞猜排行榜", icon: Trophy },
+  { id: "sponsorPredictions", label: "冠名预测", icon: Trophy },
   { id: "fun", label: "趣味预测", icon: Flame },
   { id: "achievements", label: "成就墙", icon: Crown },
   { id: "rules", label: "规则", icon: ShieldCheck },
@@ -702,7 +718,8 @@ const tabs = [
   { id: "admin", label: "管理", icon: Settings, adminOnly: true },
 ];
 
-const PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"];
+const DESKTOP_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"];
+const MOBILE_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "allFeatures"];
 const THEME_OPTIONS = [
   { id: "system", label: "跟随系统", icon: Sparkles },
   { id: "light", label: "浅色", icon: SunMedium },
@@ -735,14 +752,16 @@ function TeamLogo({ logo, name, size = "h-4 w-6" }) {
   return <span className={`inline-flex ${size} items-center justify-center text-xs text-slate-400`}>?</span>;
 }
 
-function TeamName({ name, logo, className = "" }) {
+function TeamName({ name, logo, className = "", interactiveProfile = false }) {
   const displayName = translateDisplayText(name);
-  return (
+  const content = (
     <span className={`inline-flex min-w-0 items-center gap-2 ${className}`}>
       <TeamLogo logo={logo} name={displayName} />
       <span className="truncate">{displayName}</span>
     </span>
   );
+  if (!interactiveProfile) return content;
+  return <TeamProfileTrigger name={displayName}>{content}</TeamProfileTrigger>;
 }
 
 function getOutcome(home, away) {
@@ -1045,12 +1064,21 @@ function getMostCommonPrediction(playerPredictions) {
   return Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
 }
 
-function getPlayerTitles(player, funPredictions, funResults, predictionStyleRankings, streakRankings, reverseLightPlayer) {
+function getPlayerTitles(player, sponsorPredictions, sponsorPredictionResults, players, funPredictions, funResults, predictionStyleRankings, streakRankings, reverseLightPlayer) {
   const titles = [];
   const prediction = funPredictions[player.id];
   const resultTotalGoals = Number(funResults.totalGoals);
   const allGoalPredictions = Object.values(funPredictions).filter((item) => Number.isFinite(Number(item.totalGoals)) && Number.isFinite(resultTotalGoals));
   const closestGoalDiff = allGoalPredictions.length ? Math.min(...allGoalPredictions.map((item) => Math.abs(Number(item.totalGoals) - resultTotalGoals))) : null;
+
+  const sponsorTitles = getPlayerSponsorTitles({
+    playerId: player.id,
+    players,
+    sponsorPredictions,
+    sponsorPredictionResults,
+  });
+  if (sponsorTitles.includes("足球研究所所长")) titles.push("足球研究所所长");
+  sponsorTitles.filter((title) => title !== "足球研究所所长").forEach((title) => titles.push(title));
 
   if (prediction && funResults.champion && isSameDisplayValue(prediction.champion, funResults.champion)) titles.push("世界杯导演");
   if (prediction && funResults.goldenBoot && isSameDisplayValue(prediction.goldenBoot, funResults.goldenBoot)) titles.push("金靴伯乐");
@@ -1377,9 +1405,15 @@ function HeroBanner() {
 }
 
 function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, setSelectedProfilePlayerId, currentPlayer, signOut, isAdmin, dataError }) {
-  const mainTabs = visibleTabs.filter((tab) => PRIMARY_NAV_IDS.includes(tab.id));
-  const extraTabs = visibleTabs.filter((tab) => !PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
+  const desktopMainTabs = visibleTabs.filter((tab) => DESKTOP_PRIMARY_NAV_IDS.includes(tab.id));
+  const mobileMainTabs = visibleTabs.filter((tab) => MOBILE_PRIMARY_NAV_IDS.includes(tab.id));
+  const extraTabs = visibleTabs.filter((tab) => !DESKTOP_PRIMARY_NAV_IDS.includes(tab.id) && !MOBILE_PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
   const adminTabs = visibleTabs.filter((tab) => tab.id === "admin");
+
+  function activateTab(tabId) {
+    if (tabId === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
+    setActiveTab(tabId);
+  }
 
   function renderTab(tab, mobile = false) {
     const Icon = tab.icon;
@@ -1388,10 +1422,7 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
       <button
         key={tab.id}
         type="button"
-        onClick={() => {
-          if (tab.id === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
-          setActiveTab(tab.id);
-        }}
+        onClick={() => activateTab(tab.id)}
         className={cn(
           "group flex items-center gap-3 rounded-[22px] px-4 py-3 text-left transition",
           mobile ? "min-w-0 flex-1 flex-col gap-1.5 rounded-[18px] px-1.5 py-2 text-center text-[12px] font-semibold" : "w-full text-sm font-semibold",
@@ -1435,14 +1466,14 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
             {dataError ? <div className="mt-3 rounded-[18px] border px-3 py-2 text-xs" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 35%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 84%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>{dataError}</div> : null}
           </div>
           <nav className="mt-5 flex-1 overflow-auto pr-1">
-            <div className="space-y-2">{mainTabs.map((tab) => renderTab(tab))}</div>
+            <div className="space-y-2">{desktopMainTabs.map((tab) => renderTab(tab))}</div>
             {extraTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">扩展内容</div><div className="space-y-2">{extraTabs.map((tab) => renderTab(tab))}</div></div> : null}
             {adminTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">管理入口</div><div className="space-y-2">{adminTabs.map((tab) => renderTab(tab))}</div></div> : null}
           </nav>
         </div>
       </aside>
       <nav className="md3-bottom-nav">
-        {mainTabs.map((tab) => renderTab(tab, true))}
+        {mobileMainTabs.map((tab) => renderTab(tab, true))}
       </nav>
     </>
   );
@@ -1724,6 +1755,8 @@ export default function WorldCupPredictionMVP() {
   const [predictions, setPredictions] = useState([]);
   const [funPredictions, setFunPredictions] = useState({});
   const [funResults, setFunResults] = useState(emptyFunResults);
+  const [sponsorPredictions, setSponsorPredictions] = useState(emptySponsorPredictions);
+  const [sponsorPredictionResults, setSponsorPredictionResults] = useState(emptySponsorPredictionResults);
   const [worldCupResults, setWorldCupResults] = useState({});
   const [selectedMatchId, setSelectedMatchId] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE[0]?.id || "");
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
@@ -1829,28 +1862,34 @@ export default function WorldCupPredictionMVP() {
       profilesResult,
       predictionsResult,
       funPredictionsResult,
+      sponsorPredictionsResult,
       matchOverridesResult,
       liveMatchStatesResult,
       worldCupResultsResult,
       funResultsResult,
+      sponsorPredictionResultsResult,
     ] = await Promise.all([
       supabase.from("profiles").select("*").order("joined_at", { ascending: true }),
       supabase.from("predictions").select("*").order("submitted_at", { ascending: true }),
       supabase.from("fun_predictions").select("*"),
+      supabase.from("sponsor_predictions").select("*"),
       supabase.from("match_overrides").select("*"),
       supabase.from("live_match_states").select("*"),
       supabase.from("world_cup_results").select("*"),
       supabase.from("fun_results").select("*").eq("id", "main").maybeSingle(),
+      supabase.from("sponsor_prediction_results").select("*"),
     ]);
 
     const firstError = [
       profilesResult,
       predictionsResult,
       funPredictionsResult,
+      sponsorPredictionsResult,
       matchOverridesResult,
       liveMatchStatesResult,
       worldCupResultsResult,
       funResultsResult,
+      sponsorPredictionResultsResult,
     ].find((result) => result.error)?.error;
     if (firstError) throw firstError;
 
@@ -1861,10 +1900,12 @@ export default function WorldCupPredictionMVP() {
     setPlayers((profilesResult.data || []).map(mapProfile));
     setPredictions((predictionsResult.data || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
     setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
+    setSponsorPredictions(mapSponsorPredictions(sponsorPredictionsResult.data || []));
     setCompleteSchedule(hydratedMatches);
     setMatches(hydratedMatches);
     setWorldCupResults(mapWorldCupResults(worldCupResultsResult.data || []));
     setFunResults(mapFunResults(funResultsResult.data));
+    setSponsorPredictionResults(mapSponsorPredictionResults(sponsorPredictionResultsResult.data || []));
   }
 
   async function refreshSupabaseData() {
@@ -1879,6 +1920,8 @@ export default function WorldCupPredictionMVP() {
         setPlayers([]);
         setPredictions([]);
         setFunPredictions({});
+        setSponsorPredictions(emptySponsorPredictions);
+        setSponsorPredictionResults(emptySponsorPredictionResults);
         setCompleteSchedule(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
         setScheduleSource("local");
         setMatches(getFallbackMatches());
@@ -2179,6 +2222,35 @@ export default function WorldCupPredictionMVP() {
     openSnackbar("趣味预测已保存");
   }
 
+  async function saveSponsorPrediction(eventId, predictedTotalSeconds) {
+    if (!currentPlayerId || funPredictionLocked) return;
+    const normalizedSeconds = Math.floor(Number(predictedTotalSeconds));
+    if (!eventId || !Number.isFinite(normalizedSeconds) || normalizedSeconds < 0) return;
+
+    const submittedAt = new Date().toISOString();
+    const { error } = await supabase.from("sponsor_predictions").upsert({
+      event_id: eventId,
+      user_id: currentPlayerId,
+      predicted_total_seconds: normalizedSeconds,
+      submitted_at: submittedAt,
+    }, { onConflict: "event_id,user_id" });
+    if (error) {
+      showUserError(error, "sponsor_prediction_save");
+      return;
+    }
+    setSponsorPredictions((prev) => ({
+      ...prev,
+      [eventId]: {
+        ...(prev[eventId] || {}),
+        [currentPlayerId]: {
+          predictedTotalSeconds: normalizedSeconds,
+          submittedAt,
+        },
+      },
+    }));
+    openSnackbar("冠名预测已保存");
+  }
+
   async function saveFunResults(nextResults) {
     if (!isAdmin) return;
     const { error } = await supabase.rpc("admin_save_fun_results", {
@@ -2193,6 +2265,33 @@ export default function WorldCupPredictionMVP() {
     }
     setFunResults(nextResults);
     openSnackbar("趣味预测答案已更新");
+  }
+
+  async function saveSponsorPredictionResult({ eventId, resolvedMatchId, actualTotalSeconds, sponsorName }) {
+    if (!isAdmin || !eventId || !resolvedMatchId) return;
+    const normalizedSeconds = Math.floor(Number(actualTotalSeconds));
+    if (!Number.isFinite(normalizedSeconds) || normalizedSeconds < 0) return;
+
+    const { error } = await supabase.rpc("admin_save_sponsor_prediction_result", {
+      p_event_id: eventId,
+      p_resolved_match_id: resolvedMatchId,
+      p_actual_total_seconds: normalizedSeconds,
+      p_sponsor_name: sponsorName || "",
+    });
+    if (error) {
+      showUserError(error, "sponsor_prediction_result_save");
+      return;
+    }
+    setSponsorPredictionResults((prev) => ({
+      ...prev,
+      [eventId]: {
+        resolvedMatchId,
+        actualTotalSeconds: normalizedSeconds,
+        sponsorName: sponsorName || "",
+        resolvedAt: new Date().toISOString(),
+      },
+    }));
+    openSnackbar("冠名预测答案已更新");
   }
 
   async function updateProfile(profile) {
@@ -2282,15 +2381,17 @@ export default function WorldCupPredictionMVP() {
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
           {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} />}
+          {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} />}
-          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
+          {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={sponsorPredictionResults} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
+          {activeTab === "sponsorPredictions" && <SponsorPredictionPanel currentPlayer={currentPlayer} players={players} matches={matches} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={sponsorPredictionResults} onSave={saveSponsorPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} />}
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} openDialog={openDialog} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -2413,6 +2514,73 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
   );
 }
 
+function AllFeaturesPanel({ currentPlayerId, isAdmin, setActiveTab, setSelectedProfilePlayerId }) {
+  const featureTabs = [
+    { id: "home", label: "首页", icon: Home, description: "回到欢迎首页与下一场入口" },
+    { id: "schedule", label: "赛程竞猜", icon: CalendarDays, description: "查看并提交每场比分预测" },
+    { id: "ranking", label: "竞猜排行榜", icon: Trophy, description: "查看房间积分与称号排名" },
+    { id: "achievements", label: "成就墙", icon: Crown, description: "浏览徽章、称号与收集进度" },
+    { id: "playerProfile", label: "个人主页", icon: Users, description: "管理我的资料与历史表现" },
+    { id: "completeSchedule", label: "完整赛程", icon: CalendarDays, description: "按时间查看完整世界杯赛程" },
+    { id: "worldCupStandings", label: "世界杯排名", icon: Medal, description: "查看各组积分榜与晋级形势" },
+    { id: "sponsorPredictions", label: "冠名预测", icon: Trophy, description: "参与首球时间等冠名称号玩法" },
+    { id: "fun", label: "趣味预测", icon: Flame, description: "提交冠军、金靴和总进球趣味竞猜" },
+    { id: "rules", label: "规则", icon: ShieldCheck, description: "查看积分、锁盘与结算规则" },
+  ];
+
+  if (isAdmin) {
+    featureTabs.push({
+      id: "admin",
+      label: "管理入口",
+      icon: Settings,
+      description: "仅管理员可见的赛果与账号管理",
+    });
+  }
+
+  function openFeature(tabId) {
+    if (tabId === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
+    setActiveTab(tabId);
+  }
+
+  return (
+    <section className="mt-6 space-y-4 sm:space-y-5">
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div>
+            <Pill className="mb-2.5"><Plus className="h-3.5 w-3.5" /> APP 端功能总入口</Pill>
+            <h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">全部功能</h2>
+            <p className="mt-2 max-w-2xl text-sm text-slate-300">把移动端的常用功能和扩展页面集中到一个入口里，减少来回找菜单的成本。</p>
+          </div>
+          <div className="md3-panel-strong px-3 py-3 text-slate-100 shadow-xl sm:p-4">
+            <div className="text-[11px] font-bold md3-subtle">当前可用入口</div>
+            <div className="mt-1 text-sm font-black sm:text-lg">{featureTabs.length} 个</div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {featureTabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => openFeature(tab.id)}
+              className="md3-card md3-card-tone-highlight group flex min-h-[136px] flex-col items-start rounded-[26px] !p-4 text-left transition hover:-translate-y-0.5 hover:shadow-xl"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-[18px]" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 90%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>
+                <Icon className="h-5 w-5" />
+              </span>
+              <div className="mt-4 text-lg font-black">{tab.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-400">{tab.description}</div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function HomeMatchSection({ title, matches, predictions, currentPlayerId, currentTime, emptyText, onOpenMatch }) {
   return (
     <Card className="!p-3.5 sm:!p-5">
@@ -2509,7 +2677,7 @@ function MatchFeatureCard({ match, pred, now, onClick }) {
 function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
   const stage = STAGES[match.stage] || STAGES.GROUP;
   return (
-    <button onClick={onClick} className={`md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
+    <button onClick={onClick} className={`relative z-20 md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap gap-1.5 sm:gap-2">
@@ -2520,7 +2688,7 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
             <Pill style={active ? { background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" } : undefined}>{active ? "收起详情" : "展开竞猜"}</Pill>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
+          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} interactiveProfile /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} interactiveProfile /></div>
           <div className="mt-1 text-[11px] sm:text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
         <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-1.5 text-[11px] sm:text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
@@ -2550,10 +2718,10 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
             const pred = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id);
             const active = selectedMatchId === match.id;
             return (
-              <div key={match.id} className={`overflow-hidden rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
+              <div key={match.id} className={`overflow-visible rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
                 <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
-                  <div className="border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
+                  <div className="relative z-10 border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
                     <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} />
                   </div>
                 )}
@@ -2605,7 +2773,7 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
           {bestThirdTeams.slice(0, 8).map((team, index) => (
             <div key={`${team.group}-${team.team}`} className="md3-card md3-card-tone-warning p-3">
               <div className="mb-1 text-xs font-black text-amber-200">小组第三竞争 #{index + 1}</div>
-              <div className="font-black"><TeamName name={team.team} logo={team.logo} /></div>
+              <div className="font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></div>
               <div className="mt-1 text-xs text-slate-400">{team.group} · {team.points}分 · 净胜球 {team.goalDifference} · 进球 {team.goalsFor}</div>
             </div>
           ))}
@@ -2636,7 +2804,7 @@ function GroupStandingsCard({ group, table }) {
               <div className="flex items-center gap-3">
                 <span className="rounded-full px-2 py-1 text-xs font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)" }}>#{index + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" /></div>
+                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" interactiveProfile /></div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] md3-subtle">
                     <Pill className={status.className}>{status.label}</Pill>
                     <span>{team.played}赛</span>
@@ -2677,7 +2845,7 @@ function GroupStandingsCard({ group, table }) {
               return (
                 <tr key={team.team} className="md3-table-row">
                   <td className="px-3 py-3 font-black">#{index + 1}</td>
-                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} /></td>
+                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></td>
                   <td className="px-3 py-3 text-center text-lg font-black text-emerald-200">{team.points}</td>
                   <td className="px-3 py-3 text-center">{team.played}</td>
                   <td className="px-3 py-3 text-center">{team.won}</td>
@@ -2752,9 +2920,9 @@ function ScheduleLargeCard({ match }) {
         <MatchCountdown match={match} now={now} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-lg font-black">
-        <TeamName name={match.home} logo={match.homeLogo} />
+        <TeamName name={match.home} logo={match.homeLogo} interactiveProfile />
         <MatchScore match={match} />
-        <TeamName name={match.away} logo={match.awayLogo} />
+        <TeamName name={match.away} logo={match.awayLogo} interactiveProfile />
       </div>
       <RegulationSettlementNotice match={match} className="mt-3" />
       <div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div>
@@ -2855,6 +3023,146 @@ function ScoreInput({ label, value, disabled, onChange }) {
   return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
 }
 
+function SponsorPredictionPanel({ currentPlayer, players, matches, sponsorPredictions, sponsorPredictionResults, onSave, locked, firstKickoff }) {
+  const event = SPONSOR_PREDICTION_EVENTS[0];
+  const predictionsByUserId = sponsorPredictions[event.id] || {};
+  const existing = predictionsByUserId[currentPlayer?.id] || {};
+  const [minutes, setMinutes] = useState("");
+  const [seconds, setSeconds] = useState("");
+  const resolvedMatch = useMemo(() => getFirstGoalResolvedMatch(matches), [matches]);
+  const result = sponsorPredictionResults[event.id] || null;
+  const winners = useMemo(() => getSponsorPredictionWinners({
+    eventId: event.id,
+    players,
+    predictionsByUserId,
+    result,
+  }), [players, predictionsByUserId, result, event.id]);
+
+  React.useEffect(() => {
+    const next = splitSponsorPredictionClock(existing.predictedTotalSeconds);
+    setMinutes(existing.predictedTotalSeconds === undefined ? "" : next.minutes);
+    setSeconds(existing.predictedTotalSeconds === undefined ? "" : next.seconds);
+  }, [existing.predictedTotalSeconds]);
+
+  const normalizedMinutes = String(minutes).trim();
+  const normalizedSeconds = String(seconds).trim();
+  const minuteValue = Number(normalizedMinutes);
+  const secondValue = Number(normalizedSeconds);
+  const validSeconds = normalizedSeconds !== "" && Number.isInteger(secondValue) && secondValue >= 0 && secondValue <= 59;
+  const validMinutes = normalizedMinutes !== "" && Number.isInteger(minuteValue) && minuteValue >= 0;
+  const canSubmit = !locked && validMinutes && validSeconds;
+  const canShow = locked;
+  const winnerIds = new Set(winners.map((player) => player.id));
+  const visiblePlayers = getVisiblePredictionPlayers({
+    players,
+    predictionsByUserId,
+    showAll: canShow,
+    currentPlayerId: currentPlayer?.id,
+  });
+  const resolvedMatchLabel = resolvedMatch ? `#${resolvedMatch.no} · ${teamName(resolvedMatch.home)} vs ${teamName(resolvedMatch.away)}` : "待首球出现后自动识别";
+
+  return (
+    <section className="mt-6 space-y-4 sm:space-y-5">
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div>
+            <Pill className="mb-2.5"><Trophy className="h-3.5 w-3.5" /> 冠名玩法 · 不额外加分</Pill>
+            <h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">冠名预测</h2>
+            <p className="mt-2 text-sm text-slate-300">{event.sponsorName} 冠名 · {event.title}</p>
+          </div>
+          <div className="md3-panel-strong grid gap-2 px-3 py-3 text-slate-100 shadow-xl sm:p-4">
+            <div>
+              <div className="text-[11px] font-bold md3-subtle">锁定时间</div>
+              <div className="mt-1 text-sm font-black sm:text-lg">{formatDateTime(firstKickoff)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] font-bold md3-subtle">当前锁定的首球比赛</div>
+              <div className="mt-1 text-sm font-black">{resolvedMatchLabel}</div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
+        <Card className={`${CARD_TONE.tonal} !p-3.5 sm:!p-5`}>
+          <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
+            <div>
+              <p className="mt-1 text-xs text-slate-400">{event.description}</p>
+            </div>
+            {locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}
+          </div>
+
+          <div className="space-y-3 sm:space-y-4">
+            <div className="rounded-[18px] border px-3 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
+              <div className="text-sm font-black">称号奖励：{event.titleName}</div>
+              <div className="mt-1 text-xs leading-relaxed text-slate-400">{event.helperText}</div>
+            </div>
+            <div>
+              <label className="md3-label">预测首球比赛时间</label>
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <input value={minutes} disabled={locked} onChange={(event) => setMinutes(event.target.value.replace(/[^\d]/g, ""))} placeholder="分" className="md3-field py-2.5 text-center text-sm disabled:opacity-50" />
+                <span className="text-sm font-black text-slate-300">:</span>
+                <input value={seconds} disabled={locked} onChange={(event) => setSeconds(event.target.value.replace(/[^\d]/g, ""))} placeholder="秒" className="md3-field py-2.5 text-center text-sm disabled:opacity-50" />
+              </div>
+              <div className="mt-2 text-[11px] leading-relaxed text-slate-500 sm:text-xs">
+                按累计比赛时间填写，例如 12分34秒；如果进入伤停补时，45+2:15 请换算为 47分15秒。
+              </div>
+            </div>
+            <DarkButton disabled={!canSubmit} onClick={() => onSave(event.id, (minuteValue * 60) + secondValue)} className="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-black sm:py-3">
+              <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
+              {existing.submittedAt ? "更新冠名预测" : "提交冠名预测"}
+            </DarkButton>
+            <div className="md3-panel-inset p-3 text-[11px] leading-relaxed text-slate-500 sm:text-xs">
+              当前规则：冠名预测不改变排行榜积分；揭幕战开球后统一锁定并公开所有人的选择。
+            </div>
+          </div>
+        </Card>
+
+        <Card className={`${CARD_TONE.default} !p-3.5 sm:!p-5`}>
+          <div className="mb-3 flex flex-col justify-between gap-3 sm:mb-4 md:flex-row md:items-center">
+            <div>
+              <h3 className="text-lg font-black sm:text-xl">朋友的冠名预测</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                {result?.actualTotalSeconds !== undefined
+                  ? `官方首球时间：${formatSponsorPredictionClock(result.actualTotalSeconds)}`
+                  : "等待管理员录入官方首球时间后结算称号"}
+              </p>
+            </div>
+            <Pill>{Object.keys(predictionsByUserId).length}/{players.length} 已提交</Pill>
+          </div>
+
+          {winners.length > 0 ? (
+            <div className="mb-4 rounded-[20px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-secondary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 60%, transparent)" }}>
+              <div className="text-sm font-black text-slate-100">当前称号得主：{event.titleName}</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {winners.map((player) => <Pill key={player.id} className="bg-yellow-500/15 text-yellow-200">{player.name} · 相差 {player.diffSeconds} 秒</Pill>)}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="grid gap-2.5 sm:gap-3 md:grid-cols-2">
+            {visiblePlayers.map((player) => (
+              <SponsorPredictionPlayerCard
+                key={player.id}
+                player={player}
+                prediction={predictionsByUserId[player.id]}
+                isMe={player.id === currentPlayer?.id}
+                canShow={canShow || player.id === currentPlayer?.id}
+                isWinner={winnerIds.has(player.id)}
+                titleName={event.titleName}
+              />
+            ))}
+          </div>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function SponsorPredictionPlayerCard({ player, prediction, isMe, canShow, isWinner, titleName }) {
+  return <div className="md3-card md3-card-tone-highlight !p-3 sm:!p-4"><div className="mb-2.5 flex items-center justify-between gap-3 sm:mb-3"><div className="flex min-w-0 items-center gap-3"><UserBadge player={player} size="h-9 w-9 sm:h-10 sm:w-10" /><div className="min-w-0"><div className="truncate font-black">{player.name} {isMe && <span className="text-xs text-emerald-200">我</span>}</div><div className="text-[11px] text-slate-500 sm:text-xs">{prediction ? "已提交" : "未提交"}</div></div></div>{prediction ? <CheckCircle2 className="h-4 w-4 text-emerald-200 sm:h-5 sm:w-5" /> : <XCircle className="h-4 w-4 text-slate-600 sm:h-5 sm:w-5" />}</div>{canShow ? <div className="space-y-1.5 text-xs sm:space-y-2 sm:text-sm"><InfoRow label="首球时间" value={prediction ? formatSponsorPredictionClock(prediction.predictedTotalSeconds) : "--"} />{prediction?.submittedAt ? <InfoRow label="提交时间" value={formatDateTime(prediction.submittedAt)} /> : null}{isWinner ? <div className="flex flex-wrap gap-1.5 pt-1"><Pill className="bg-yellow-500/15 text-yellow-200">{titleName}</Pill></div> : null}</div> : <div className="md3-panel-inset px-3 py-4 text-center text-xs text-slate-500 sm:text-sm">揭幕战开赛后公开</div>}</div>;
+}
+
 function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, locked, firstKickoff, funResults }) {
   const existing = funPredictions[currentPlayer?.id] || {};
   const [champion, setChampion] = useState(teamName(existing.champion) || "");
@@ -2877,8 +3185,14 @@ function FunPredictionPanel({ currentPlayer, players, funPredictions, onSave, lo
       return { ...player, titles };
     });
   }, [players, funPredictions, funResults]);
+  const visiblePlayers = getVisiblePredictionPlayers({
+    players,
+    predictionsByUserId: funPredictions,
+    showAll: locked,
+    currentPlayerId: currentPlayer?.id,
+  });
   return (
-    <section className="mt-6 space-y-4 sm:space-y-5"><Card className="!p-3.5 sm:!p-5"><div className="flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><Pill className="mb-2.5"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</Pill><h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">趣味预测栏</h2></div><div className="md3-panel-strong px-3 py-3 text-slate-100 shadow-xl sm:p-4"><div className="text-[11px] font-bold md3-subtle">锁定时间</div><div className="mt-1 text-sm font-black sm:text-lg">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-4 lg:grid-cols-[380px_1fr]"><Card className={`${CARD_TONE.tonal} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">我的趣味预测</h3></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}</div><div className="space-y-3 sm:space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="md3-label">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="md3-field py-2.5 text-sm disabled:opacity-50" /><div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500 sm:text-xs">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="md3-panel-inset px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-black sm:py-3"><CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="md3-panel-inset p-3 text-[11px] leading-relaxed text-slate-500 sm:text-xs">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card className={`${CARD_TONE.default} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">朋友趣味预测</h3></div><Pill>{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-2.5 sm:gap-3 md:grid-cols-2">{players.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
+    <section className="mt-6 space-y-4 sm:space-y-5"><Card className="!p-3.5 sm:!p-5"><div className="flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><Pill className="mb-2.5"><Flame className="h-3.5 w-3.5" /> 荣誉玩法 · 不额外加分</Pill><h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">趣味预测栏</h2></div><div className="md3-panel-strong px-3 py-3 text-slate-100 shadow-xl sm:p-4"><div className="text-[11px] font-bold md3-subtle">锁定时间</div><div className="mt-1 text-sm font-black sm:text-lg">{formatDateTime(firstKickoff)}</div></div></div></Card><div className="grid gap-4 lg:grid-cols-[380px_1fr]"><Card className={`${CARD_TONE.tonal} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">我的趣味预测</h3></div>{locked ? <Pill className="bg-amber-500/15 text-amber-200">已锁定</Pill> : <Pill className="bg-emerald-500/15 text-emerald-200">可提交</Pill>}</div><div className="space-y-3 sm:space-y-4"><FunInput label="冠军预测 · 称号：世界杯导演" value={champion} disabled={locked} onChange={setChampion} placeholder="例如：巴西 / 阿根廷 / 法国" /><FunInput label="金靴预测 · 称号：金靴伯乐" value={goldenBoot} disabled={locked} onChange={setGoldenBoot} placeholder="例如：姆巴佩 / 哈兰德 / 梅西" /><FunInput label="首张红牌球队 · 称号：我闻到了火药味" value={firstRedCardTeam} disabled={locked} onChange={setFirstRedCardTeam} placeholder="例如：乌拉圭 / 阿根廷 / 塞尔维亚" /><div><label className="md3-label">本届总进球数预测 · 称号：进球神算子</label><input type="number" min="0" value={totalGoals} disabled={locked} onChange={(e) => setTotalGoals(e.target.value)} placeholder="例如：180" className="md3-field py-2.5 text-sm disabled:opacity-50" /><div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500 sm:text-xs">{WORLD_CUP_GOAL_REFERENCES.map((item) => <div key={item.edition} className="md3-panel-inset px-3 py-2">{item.edition}：<span className="font-black text-slate-200">{item.goals} 球</span></div>)}</div></div><DarkButton disabled={!canSubmitFunPrediction} onClick={() => onSave(champion, goldenBoot, firstRedCardTeam, totalGoals)} className="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-black sm:py-3"><CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />{existing.submittedAt ? "更新趣味预测" : "提交趣味预测"}</DarkButton><div className="md3-panel-inset p-3 text-[11px] leading-relaxed text-slate-500 sm:text-xs">当前规则：趣味预测不改变排行榜积分；第一场比赛开始后统一锁定并公开所有人的选择。</div></div></Card><Card className={`${CARD_TONE.default} !p-3.5 sm:!p-5`}><div className="mb-3 flex items-center justify-between gap-3 sm:mb-4"><div><h3 className="text-lg font-black sm:text-xl">朋友趣味预测</h3></div><Pill>{Object.keys(funPredictions).length}/{players.length} 已提交</Pill></div><div className="grid gap-2.5 sm:gap-3 md:grid-cols-2">{visiblePlayers.map((player) => <FunPredictionPlayerCard key={player.id} player={player} prediction={funPredictions[player.id]} isMe={player.id === currentPlayer?.id} canShow={locked || player.id === currentPlayer?.id} awards={titleAwards.find((item) => item.id === player.id)?.titles || []} />)}</div></Card></div></section>
   );
 }
 
@@ -2956,7 +3270,7 @@ function FunResultsCard({ funResults, onSetFunResults }) {
   );
 }
 
-function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, funPredictions, funResults, achievementCollections, campBattleSummary, themeMode, onChangeTheme, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
+function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predictions, matches, streakRankings, predictionStyleRankings, reverseLightPlayer, sponsorPredictions, sponsorPredictionResults, funPredictions, funResults, achievementCollections, campBattleSummary, themeMode, onChangeTheme, onUpdateProfile, onBack, onOpenAchievements, onOpenFullHistory }) {
   const rankingIndex = rankings.findIndex((item) => item.id === player.id) + 1;
   const ranking = rankings.find((item) => item.id === player.id) || player;
   const isOwnProfile = player.id === currentPlayerId;
@@ -2970,7 +3284,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
   const attackPredictions = playerPredictions.filter((prediction) => prediction.home + prediction.away >= 4).length;
   const commonScore = getMostCommonPrediction(playerPredictions);
   const favoriteStyle = drawPredictions === 0 && attackPredictions === 0 ? "暂无明显风格" : drawPredictions >= attackPredictions ? `更喜欢预测平局（${drawPredictions}次）` : `更喜欢大比分（${attackPredictions}次）`;
-  const titles = getPlayerTitles(player, funPredictions, funResults, predictionStyleRankings, streakRankings, reverseLightPlayer);
+  const titles = getPlayerTitles(player, sponsorPredictions, sponsorPredictionResults, players, funPredictions, funResults, predictionStyleRankings, streakRankings, reverseLightPlayer);
   const playerAchievementStats = (achievementCollections?.byPlayerId?.[player.id] || []).map((item) => ({
     achievement: item.achievement,
     currentPlayerProgress: item.progress,
@@ -3834,7 +4148,61 @@ function AdminAccountManagementCard({ players, onSetUserAdmin }) {
   );
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, onSetUserCamp, onSetUserAdmin, openDialog }) {
+function SponsorPredictionResultsCard({ matches, sponsorPredictionResults, onSetSponsorPredictionResult }) {
+  const event = SPONSOR_PREDICTION_EVENTS[0];
+  const resolvedMatch = useMemo(() => getFirstGoalResolvedMatch(matches), [matches]);
+  const existing = sponsorPredictionResults[event.id] || {};
+  const [minutes, setMinutes] = useState("");
+  const [seconds, setSeconds] = useState("");
+  const [sponsorName, setSponsorName] = useState(event.sponsorName);
+
+  React.useEffect(() => {
+    const next = splitSponsorPredictionClock(existing.actualTotalSeconds);
+    setMinutes(existing.actualTotalSeconds === undefined ? "" : next.minutes);
+    setSeconds(existing.actualTotalSeconds === undefined ? "" : next.seconds);
+    setSponsorName(existing.sponsorName || event.sponsorName);
+  }, [existing.actualTotalSeconds, existing.sponsorName, event.sponsorName]);
+
+  const minuteValue = Number(minutes);
+  const secondValue = Number(seconds);
+  const canSave = Boolean(
+    resolvedMatch
+    && String(minutes).trim() !== ""
+    && String(seconds).trim() !== ""
+    && Number.isInteger(minuteValue)
+    && minuteValue >= 0
+    && Number.isInteger(secondValue)
+    && secondValue >= 0
+    && secondValue <= 59,
+  );
+
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div>
+          <h3 className="text-xl font-black">冠名预测结算</h3>
+          <p className="text-sm text-slate-400">系统会自动识别哪一场产生了世界杯首球；管理员只需录入官方比赛时间。</p>
+        </div>
+        <Pill>管理员结算</Pill>
+      </div>
+      <div className="mb-4 rounded-[20px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
+        <div className="text-sm font-black">自动识别到的首球比赛</div>
+        <div className="mt-1 text-sm text-slate-300">{resolvedMatch ? `#${resolvedMatch.no} · ${teamName(resolvedMatch.home)} vs ${teamName(resolvedMatch.away)}` : "尚未出现已结算且有进球的比赛"}</div>
+        {existing.actualTotalSeconds !== undefined ? <div className="mt-2 text-xs text-emerald-200">当前已录入官方首球时间：{formatSponsorPredictionClock(existing.actualTotalSeconds)}</div> : null}
+      </div>
+      <div className="grid gap-3 md:grid-cols-[1.3fr_1fr_1fr]">
+        <input value={sponsorName} onChange={(event) => setSponsorName(event.target.value)} placeholder="冠名人名称" className="md3-field text-sm" />
+        <input value={minutes} onChange={(event) => setMinutes(event.target.value.replace(/[^\d]/g, ""))} placeholder="首球分钟" className="md3-field text-sm" />
+        <input value={seconds} onChange={(event) => setSeconds(event.target.value.replace(/[^\d]/g, ""))} placeholder="首球秒数" className="md3-field text-sm" />
+      </div>
+      <button disabled={!canSave} onClick={() => onSetSponsorPredictionResult?.({ eventId: event.id, resolvedMatchId: resolvedMatch.id, actualTotalSeconds: (minuteValue * 60) + secondValue, sponsorName: sponsorName.trim() || event.sponsorName })} className="mt-4 w-full rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-black text-emerald-50 transition hover:bg-emerald-600 disabled:opacity-50 md:w-auto">
+        结算冠名称号
+      </button>
+    </Card>
+  );
+}
+
+function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, sponsorPredictionResults, onSetSponsorPredictionResult, onSetUserCamp, onSetUserAdmin, openDialog }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
   const normalizedQuery = adminQuery.trim().toLowerCase();
@@ -3849,6 +4217,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
 
   return (
     <section className="mt-6 space-y-5">
+      <SponsorPredictionResultsCard matches={matches} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={onSetSponsorPredictionResult} />
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
       <AdminAccountManagementCard players={players} onSetUserAdmin={onSetUserAdmin} />
       <Card>
