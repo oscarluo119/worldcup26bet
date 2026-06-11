@@ -311,9 +311,6 @@ const CAMP_CONFIG = {
     glow: "shadow-[0_18px_50px_rgba(14,165,233,0.12)]",
   },
 };
-const WORLDCUP_API_KEY = import.meta.env.VITE_WORLDCUP_API_KEY;
-const WORLDCUP_FIXTURES_URL = "https://api.worldcupapi.com/fixtures";
-
 const GROUP_ID_LABELS = {
   4286: "A组",
   4287: "B组",
@@ -588,104 +585,6 @@ function getFallbackMatches() {
     homeScore: null,
     awayScore: null,
   }));
-}
-
-class WorldCupApiError extends Error {
-  constructor(message, { status = null, code = "provider_error", endpoint = "赛程" } = {}) {
-    super(message);
-    this.name = "WorldCupApiError";
-    this.status = status;
-    this.code = code;
-    this.endpoint = endpoint;
-  }
-}
-
-async function buildWorldCupApiError(response, endpointLabel) {
-  let detail = "";
-  try {
-    const rawText = await response.text();
-    if (rawText) {
-      try {
-        const parsed = JSON.parse(rawText);
-        detail = parsed?.error || parsed?.message || parsed?.code || rawText;
-      } catch {
-        detail = rawText;
-      }
-    }
-  } catch {
-    detail = "";
-  }
-
-  const cleanedDetail = detail.trim().slice(0, 180);
-  const status = response.status;
-  const code = status === 401 ? "auth_failed" : status >= 500 ? "provider_unavailable" : "http_error";
-  const baseMessage = status === 401
-    ? `WorldCupAPI ${endpointLabel}鉴权失败（401 Unauthorized）`
-    : `WorldCupAPI ${endpointLabel}请求失败（HTTP ${status}）`;
-
-  return new WorldCupApiError(
-    cleanedDetail ? `${baseMessage}：${cleanedDetail}` : baseMessage,
-    { status, code, endpoint: endpointLabel },
-  );
-}
-
-function normalizeWorldCupApiError(error, endpointLabel = "赛程") {
-  if (error instanceof WorldCupApiError) return error;
-  if (error instanceof TypeError) {
-    return new WorldCupApiError(
-      `WorldCupAPI ${endpointLabel}请求网络异常，请检查网络连接或 provider 服务状态`,
-      { code: "network_error", endpoint: endpointLabel },
-    );
-  }
-  if (error instanceof Error) {
-    return new WorldCupApiError(error.message, { code: "unknown_error", endpoint: endpointLabel });
-  }
-  return new WorldCupApiError(`WorldCupAPI ${endpointLabel}请求失败`, { code: "unknown_error", endpoint: endpointLabel });
-}
-
-function getScheduleFallbackErrorMessage(error) {
-  const normalized = normalizeWorldCupApiError(error, "赛程");
-  const operatorHint = normalized.code === "auth_failed"
-    ? "请检查 WorldCupAPI key、订阅状态，以及 Vercel 前端与 Supabase Edge Function 中的环境变量。"
-    : "请检查 WorldCupAPI 服务状态、网络连接，以及 Vercel 前端与 Supabase Edge Function 中的环境变量。";
-  return `${normalized.message}，已切换到本地备用赛程。${operatorHint}`;
-}
-
-function isAdminOnlyDataError(message) {
-  const text = String(message || "");
-  return text.includes("WorldCupAPI");
-}
-
-async function fetchWorldCupFixtures() {
-  if (!WORLDCUP_API_KEY) {
-    throw new WorldCupApiError("缺少 VITE_WORLDCUP_API_KEY，无法请求 WorldCupAPI 赛程", {
-      code: "missing_api_key",
-      endpoint: "赛程",
-    });
-  }
-
-  try {
-    const fixtures = [];
-    for (let page = 1; page <= 10; page += 1) {
-      const response = await fetch(`${WORLDCUP_FIXTURES_URL}?key=${encodeURIComponent(WORLDCUP_API_KEY)}&page=${page}`);
-      if (!response.ok) throw await buildWorldCupApiError(response, "赛程");
-
-      const data = await response.json();
-      if (!Array.isArray(data) || data.length === 0) break;
-      fixtures.push(...data);
-    }
-
-    if (!fixtures.length) {
-      throw new WorldCupApiError("WorldCupAPI 赛程接口返回空数据", {
-        code: "empty_data",
-        endpoint: "赛程",
-      });
-    }
-
-    return fixtures.map(normalizeWorldCupFixture);
-  } catch (error) {
-    throw normalizeWorldCupApiError(error, "赛程");
-  }
 }
 
 function mapProfile(row) {
@@ -1820,7 +1719,7 @@ export default function WorldCupPredictionMVP() {
   const [players, setPlayers] = useState(initialPlayers);
   const [currentPlayerId, setCurrentPlayerId] = useState("");
   const [completeSchedule, setCompleteSchedule] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
-  const [scheduleSource, setScheduleSource] = useState("fallback");
+  const [scheduleSource, setScheduleSource] = useState("local");
   const [matches, setMatches] = useState(getFallbackMatches());
   const [predictions, setPredictions] = useState([]);
   const [funPredictions, setFunPredictions] = useState({});
@@ -1845,7 +1744,7 @@ export default function WorldCupPredictionMVP() {
   const currentPlayer = players.find((p) => p.id === currentPlayerId) || fallbackPlayer || players[0];
   const profilePlayer = players.find((p) => p.id === selectedProfilePlayerId) || currentPlayer;
   const isAdmin = Boolean(currentPlayer?.isAdmin);
-  const visibleDataError = isAdmin || !isAdminOnlyDataError(dataError) ? dataError : "";
+  const visibleDataError = dataError;
   const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
   const firstKickoff = useMemo(() => matches.reduce((earliest, match) => {
     const kickoff = new Date(match.kickoff);
@@ -1981,7 +1880,7 @@ export default function WorldCupPredictionMVP() {
         setPredictions([]);
         setFunPredictions({});
         setCompleteSchedule(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
-        setScheduleSource("fallback");
+        setScheduleSource("local");
         setMatches(getFallbackMatches());
         setWorldCupResults({});
         setFunResults(emptyFunResults);
@@ -1993,16 +1892,9 @@ export default function WorldCupPredictionMVP() {
       setDataLoading(true);
       setDataError("");
       try {
-        let baseSchedule = FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE;
-        let baseMatches = getFallbackMatches();
-        try {
-          baseSchedule = await fetchWorldCupFixtures();
-          baseMatches = baseSchedule.map((match) => ({ ...match }));
-          setScheduleSource("worldcupapi");
-        } catch (scheduleError) {
-          setScheduleSource("fallback");
-          setDataError(getScheduleFallbackErrorMessage(scheduleError));
-        }
+        const baseSchedule = FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE;
+        const baseMatches = getFallbackMatches();
+        setScheduleSource("local");
         baseMatchesRef.current = baseMatches;
         setCompleteSchedule(baseSchedule);
         setMatches(baseMatches);
@@ -2827,7 +2719,7 @@ function FullScheduleCalendar({ schedule, source }) {
           <div>
             <Pill className="mb-3"><CalendarDays className="h-3.5 w-3.5" /> 完整赛程 · 北京时间</Pill>
             <h2 className="text-[1.75rem] font-black tracking-tight sm:text-3xl">完整赛程列表</h2>
-            <Pill className={source === "worldcupapi" ? "mt-3 bg-emerald-500/15 text-emerald-200" : "mt-3 bg-amber-500/15 text-amber-200"}>{source === "worldcupapi" ? "WorldCupAPI 实时赛程" : "本地备用赛程"}</Pill>
+            <Pill className="mt-3 bg-emerald-500/15 text-emerald-200">本地权威赛程</Pill>
           </div>
           <div className="md3-panel px-4 py-4 text-slate-100 shadow-xl"><div className="text-xs font-bold md3-subtle">比赛总数</div><div className="mt-1 text-3xl font-black">{schedule.length}</div></div>
         </div>
