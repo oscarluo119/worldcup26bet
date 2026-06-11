@@ -706,6 +706,7 @@ function getDisplayName(user, fallback = "未命名用户") {
 const tabs = [
   { id: "home", label: "首页", icon: Home },
   { id: "schedule", label: "赛程竞猜", icon: CalendarDays },
+  { id: "allFeatures", label: "全部功能", icon: Plus },
   { id: "completeSchedule", label: "完整赛程", icon: CalendarDays },
   { id: "worldCupStandings", label: "世界杯排名", icon: Medal },
   { id: "ranking", label: "竞猜排行榜", icon: Trophy },
@@ -717,7 +718,8 @@ const tabs = [
   { id: "admin", label: "管理", icon: Settings, adminOnly: true },
 ];
 
-const PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"];
+const DESKTOP_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"];
+const MOBILE_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "allFeatures"];
 const THEME_OPTIONS = [
   { id: "system", label: "跟随系统", icon: Sparkles },
   { id: "light", label: "浅色", icon: SunMedium },
@@ -1403,9 +1405,15 @@ function HeroBanner() {
 }
 
 function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, setSelectedProfilePlayerId, currentPlayer, signOut, isAdmin, dataError }) {
-  const mainTabs = visibleTabs.filter((tab) => PRIMARY_NAV_IDS.includes(tab.id));
-  const extraTabs = visibleTabs.filter((tab) => !PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
+  const desktopMainTabs = visibleTabs.filter((tab) => DESKTOP_PRIMARY_NAV_IDS.includes(tab.id));
+  const mobileMainTabs = visibleTabs.filter((tab) => MOBILE_PRIMARY_NAV_IDS.includes(tab.id));
+  const extraTabs = visibleTabs.filter((tab) => !DESKTOP_PRIMARY_NAV_IDS.includes(tab.id) && !MOBILE_PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
   const adminTabs = visibleTabs.filter((tab) => tab.id === "admin");
+
+  function activateTab(tabId) {
+    if (tabId === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
+    setActiveTab(tabId);
+  }
 
   function renderTab(tab, mobile = false) {
     const Icon = tab.icon;
@@ -1414,10 +1422,7 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
       <button
         key={tab.id}
         type="button"
-        onClick={() => {
-          if (tab.id === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
-          setActiveTab(tab.id);
-        }}
+        onClick={() => activateTab(tab.id)}
         className={cn(
           "group flex items-center gap-3 rounded-[22px] px-4 py-3 text-left transition",
           mobile ? "min-w-0 flex-1 flex-col gap-1.5 rounded-[18px] px-1.5 py-2 text-center text-[12px] font-semibold" : "w-full text-sm font-semibold",
@@ -1461,14 +1466,14 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
             {dataError ? <div className="mt-3 rounded-[18px] border px-3 py-2 text-xs" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 35%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 84%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>{dataError}</div> : null}
           </div>
           <nav className="mt-5 flex-1 overflow-auto pr-1">
-            <div className="space-y-2">{mainTabs.map((tab) => renderTab(tab))}</div>
+            <div className="space-y-2">{desktopMainTabs.map((tab) => renderTab(tab))}</div>
             {extraTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">扩展内容</div><div className="space-y-2">{extraTabs.map((tab) => renderTab(tab))}</div></div> : null}
             {adminTabs.length ? <div className="mt-5 border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)" }}><div className="mb-3 px-2 text-xs font-bold uppercase tracking-[0.18em] md3-subtle">管理入口</div><div className="space-y-2">{adminTabs.map((tab) => renderTab(tab))}</div></div> : null}
           </nav>
         </div>
       </aside>
       <nav className="md3-bottom-nav">
-        {mainTabs.map((tab) => renderTab(tab, true))}
+        {mobileMainTabs.map((tab) => renderTab(tab, true))}
       </nav>
     </>
   );
@@ -2376,6 +2381,7 @@ export default function WorldCupPredictionMVP() {
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
           {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} />}
+          {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
           {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} />}
@@ -2504,6 +2510,73 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
       </div>
 
       <HomeMatchSection title="即将截止" matches={soonLockMatches} predictions={predictions} currentPlayerId={currentPlayerId} currentTime={currentTime} emptyText="暂无即将锁定的比赛" onOpenMatch={openMatch} />
+    </section>
+  );
+}
+
+function AllFeaturesPanel({ currentPlayerId, isAdmin, setActiveTab, setSelectedProfilePlayerId }) {
+  const featureTabs = [
+    { id: "home", label: "首页", icon: Home, description: "回到欢迎首页与下一场入口" },
+    { id: "schedule", label: "赛程竞猜", icon: CalendarDays, description: "查看并提交每场比分预测" },
+    { id: "ranking", label: "竞猜排行榜", icon: Trophy, description: "查看房间积分与称号排名" },
+    { id: "achievements", label: "成就墙", icon: Crown, description: "浏览徽章、称号与收集进度" },
+    { id: "playerProfile", label: "个人主页", icon: Users, description: "管理我的资料与历史表现" },
+    { id: "completeSchedule", label: "完整赛程", icon: CalendarDays, description: "按时间查看完整世界杯赛程" },
+    { id: "worldCupStandings", label: "世界杯排名", icon: Medal, description: "查看各组积分榜与晋级形势" },
+    { id: "sponsorPredictions", label: "冠名预测", icon: Trophy, description: "参与首球时间等冠名称号玩法" },
+    { id: "fun", label: "趣味预测", icon: Flame, description: "提交冠军、金靴和总进球趣味竞猜" },
+    { id: "rules", label: "规则", icon: ShieldCheck, description: "查看积分、锁盘与结算规则" },
+  ];
+
+  if (isAdmin) {
+    featureTabs.push({
+      id: "admin",
+      label: "管理入口",
+      icon: Settings,
+      description: "仅管理员可见的赛果与账号管理",
+    });
+  }
+
+  function openFeature(tabId) {
+    if (tabId === "playerProfile") setSelectedProfilePlayerId(currentPlayerId);
+    setActiveTab(tabId);
+  }
+
+  return (
+    <section className="mt-6 space-y-4 sm:space-y-5">
+      <Card className="!p-3.5 sm:!p-5">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div>
+            <Pill className="mb-2.5"><Plus className="h-3.5 w-3.5" /> APP 端功能总入口</Pill>
+            <h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">全部功能</h2>
+            <p className="mt-2 max-w-2xl text-sm text-slate-300">把移动端的常用功能和扩展页面集中到一个入口里，减少来回找菜单的成本。</p>
+          </div>
+          <div className="md3-panel-strong px-3 py-3 text-slate-100 shadow-xl sm:p-4">
+            <div className="text-[11px] font-bold md3-subtle">当前可用入口</div>
+            <div className="mt-1 text-sm font-black sm:text-lg">{featureTabs.length} 个</div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {featureTabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => openFeature(tab.id)}
+              className="md3-card md3-card-tone-highlight group flex min-h-[136px] flex-col items-start rounded-[26px] !p-4 text-left transition hover:-translate-y-0.5 hover:shadow-xl"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-[18px]" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 90%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>
+                <Icon className="h-5 w-5" />
+              </span>
+              <div className="mt-4 text-lg font-black">{tab.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-400">{tab.description}</div>
+            </button>
+          );
+        })}
+      </div>
     </section>
   );
 }

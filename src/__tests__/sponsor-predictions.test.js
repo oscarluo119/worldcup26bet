@@ -101,4 +101,13 @@ describe("sponsor predictions", () => {
   test("removes the old personal sponsor prediction heading", () => {
     expect(appSource.includes("我的冠名预测")).toBe(false);
   });
+  test("adds the all-features tab and replaces the mobile profile tab", () => {
+    expect(appSource.includes('{ id: "allFeatures", label: "全部功能"')).toBe(true);
+    expect(appSource.includes('const MOBILE_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "allFeatures"]')).toBe(true);
+  });
+
+  test("keeps desktop profile navigation and adds the all-features panel", () => {
+    expect(appSource.includes('const DESKTOP_PRIMARY_NAV_IDS = ["home", "schedule", "ranking", "achievements", "playerProfile"]')).toBe(true);
+    expect(appSource.includes("function AllFeaturesPanel(")).toBe(true);
+  });
 });
