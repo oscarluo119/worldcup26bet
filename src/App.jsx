@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import { useRef } from "react";
 import {
   ArrowDown,
@@ -56,6 +56,7 @@ import brandTrophyImage from "./assets/brand-trophy.png";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
+import { normalizeUserFacingError } from "./lib/userFacingError";
 
 const STAGES = {
   GROUP: { label: "小组赛", multiplier: 1 },
@@ -1863,6 +1864,17 @@ export default function WorldCupPredictionMVP() {
     setSnackbar({ open: true, message, tone });
   }
 
+  function showUserError(error, context = "general") {
+    const normalized = normalizeUserFacingError(error, context);
+    setDataError(normalized.message);
+    openSnackbar(normalized.message, "error");
+    return normalized;
+  }
+
+  function getUserErrorMessage(error, context = "general") {
+    return normalizeUserFacingError(error, context).message;
+  }
+
   function closeSnackbar() {
     setSnackbar((prev) => ({ ...prev, open: false }));
   }
@@ -2002,7 +2014,7 @@ export default function WorldCupPredictionMVP() {
         setCurrentPlayerId(session.user.id);
         setSelectedProfilePlayerId((prev) => prev || session.user.id);
       } catch (error) {
-        if (!cancelled) setDataError(error.message || "加载 Supabase 数据失败");
+        if (!cancelled) setDataError(getUserErrorMessage(error, "data_load"));
       } finally {
         if (!cancelled) setDataLoading(false);
       }
@@ -2022,7 +2034,7 @@ export default function WorldCupPredictionMVP() {
         await refreshSupabaseData();
       } catch (error) {
         if (!stopped) {
-          setDataError((prev) => prev || error.message || "实时比分刷新失败");
+          setDataError((prev) => prev || getUserErrorMessage(error, "data_refresh"));
         }
       }
     }, 60000);
@@ -2169,8 +2181,7 @@ export default function WorldCupPredictionMVP() {
       .select()
       .single();
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "prediction_save");
       return;
     }
     const saved = mapPrediction(data);
@@ -2196,8 +2207,7 @@ export default function WorldCupPredictionMVP() {
       p_away_score: nextAway,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "match_result_save");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: nextHome, awayScore: nextAway, status: "settled" } : m));
@@ -2218,8 +2228,7 @@ export default function WorldCupPredictionMVP() {
       p_match_no: resultKey,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "match_result_clear");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: null, awayScore: null, status: "open" } : m));
@@ -2243,8 +2252,7 @@ export default function WorldCupPredictionMVP() {
       p_away_score: match.awayScore,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "match_lock_save");
       return;
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, status: nextStatus } : m));
@@ -2269,8 +2277,7 @@ export default function WorldCupPredictionMVP() {
       submitted_at: submittedAt,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "fun_prediction_save");
       return;
     }
     setFunPredictions((prev) => ({
@@ -2289,8 +2296,7 @@ export default function WorldCupPredictionMVP() {
       p_total_goals: nextResults.totalGoals === "" ? null : Number(nextResults.totalGoals),
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "fun_results_save");
       return;
     }
     setFunResults(nextResults);
@@ -2311,8 +2317,7 @@ export default function WorldCupPredictionMVP() {
         p_avatar_emoji: profile?.avatarEmoji || DEFAULT_AVATAR_EMOJI,
       });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "profile_save");
       return false;
     }
     const updatedPlayer = mapProfile(data);
@@ -2328,8 +2333,7 @@ export default function WorldCupPredictionMVP() {
       p_camp_id: campId || null,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "user_camp_save");
       return false;
     }
     setPlayers((prev) => prev.map((player) => (
@@ -2346,8 +2350,7 @@ export default function WorldCupPredictionMVP() {
       p_is_admin: nextIsAdmin,
     });
     if (error) {
-      setDataError(error.message);
-      openSnackbar(error.message, "error");
+      showUserError(error, "user_admin_save");
       return false;
     }
     await refreshSupabaseData();
