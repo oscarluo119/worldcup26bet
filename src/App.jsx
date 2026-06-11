@@ -53,6 +53,7 @@ import {
   getAchievementTheme,
 } from "./achievements";
 import brandTrophyImage from "./assets/brand-trophy.png";
+import { TeamProfileTrigger } from "./components/teamProfileCard";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
@@ -735,14 +736,16 @@ function TeamLogo({ logo, name, size = "h-4 w-6" }) {
   return <span className={`inline-flex ${size} items-center justify-center text-xs text-slate-400`}>?</span>;
 }
 
-function TeamName({ name, logo, className = "" }) {
+function TeamName({ name, logo, className = "", interactiveProfile = false }) {
   const displayName = translateDisplayText(name);
-  return (
+  const content = (
     <span className={`inline-flex min-w-0 items-center gap-2 ${className}`}>
       <TeamLogo logo={logo} name={displayName} />
       <span className="truncate">{displayName}</span>
     </span>
   );
+  if (!interactiveProfile) return content;
+  return <TeamProfileTrigger name={displayName}>{content}</TeamProfileTrigger>;
 }
 
 function getOutcome(home, away) {
@@ -2509,7 +2512,7 @@ function MatchFeatureCard({ match, pred, now, onClick }) {
 function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
   const stage = STAGES[match.stage] || STAGES.GROUP;
   return (
-    <button onClick={onClick} className={`md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
+    <button onClick={onClick} className={`relative z-20 md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap gap-1.5 sm:gap-2">
@@ -2520,7 +2523,7 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
             <Pill style={active ? { background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" } : undefined}>{active ? "收起详情" : "展开竞猜"}</Pill>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
+          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} interactiveProfile /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} interactiveProfile /></div>
           <div className="mt-1 text-[11px] sm:text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
         <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-1.5 text-[11px] sm:text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
@@ -2550,10 +2553,10 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
             const pred = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id);
             const active = selectedMatchId === match.id;
             return (
-              <div key={match.id} className={`overflow-hidden rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
+              <div key={match.id} className={`overflow-visible rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
                 <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
-                  <div className="border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
+                  <div className="relative z-10 border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
                     <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} />
                   </div>
                 )}
@@ -2605,7 +2608,7 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
           {bestThirdTeams.slice(0, 8).map((team, index) => (
             <div key={`${team.group}-${team.team}`} className="md3-card md3-card-tone-warning p-3">
               <div className="mb-1 text-xs font-black text-amber-200">小组第三竞争 #{index + 1}</div>
-              <div className="font-black"><TeamName name={team.team} logo={team.logo} /></div>
+              <div className="font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></div>
               <div className="mt-1 text-xs text-slate-400">{team.group} · {team.points}分 · 净胜球 {team.goalDifference} · 进球 {team.goalsFor}</div>
             </div>
           ))}
@@ -2636,7 +2639,7 @@ function GroupStandingsCard({ group, table }) {
               <div className="flex items-center gap-3">
                 <span className="rounded-full px-2 py-1 text-xs font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)" }}>#{index + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" /></div>
+                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" interactiveProfile /></div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] md3-subtle">
                     <Pill className={status.className}>{status.label}</Pill>
                     <span>{team.played}赛</span>
@@ -2677,7 +2680,7 @@ function GroupStandingsCard({ group, table }) {
               return (
                 <tr key={team.team} className="md3-table-row">
                   <td className="px-3 py-3 font-black">#{index + 1}</td>
-                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} /></td>
+                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></td>
                   <td className="px-3 py-3 text-center text-lg font-black text-emerald-200">{team.points}</td>
                   <td className="px-3 py-3 text-center">{team.played}</td>
                   <td className="px-3 py-3 text-center">{team.won}</td>
@@ -2752,9 +2755,9 @@ function ScheduleLargeCard({ match }) {
         <MatchCountdown match={match} now={now} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-lg font-black">
-        <TeamName name={match.home} logo={match.homeLogo} />
+        <TeamName name={match.home} logo={match.homeLogo} interactiveProfile />
         <MatchScore match={match} />
-        <TeamName name={match.away} logo={match.awayLogo} />
+        <TeamName name={match.away} logo={match.awayLogo} interactiveProfile />
       </div>
       <RegulationSettlementNotice match={match} className="mt-3" />
       <div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div>
