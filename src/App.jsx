@@ -52,6 +52,7 @@ import {
   getAchievementBadgeClass,
   getAchievementTheme,
 } from "./achievements";
+import brandTrophyImage from "./assets/brand-trophy.png";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { getFlagRenderData } from "./lib/flags";
 
@@ -1468,9 +1469,7 @@ function HeroBanner() {
     <section className="md3-hero">
       <div className="relative z-10 max-w-3xl">
         <h1 className="text-3xl font-black tracking-tight sm:text-4xl">欢迎来到2026美加墨世界杯</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/86 sm:text-base">
-          和朋友一起预测每一场胜负与比分，在 2026 美加墨世界杯里看看谁才是真正最懂球的人。
-        </p>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/86 sm:text-base">本次竞猜由月半洛夫维奇独家赞助。</p>
       </div>
     </section>
   );
@@ -1512,11 +1511,11 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
         <div className="md3-card md3-surface sticky top-5 flex max-h-[calc(100vh-40px)] flex-col overflow-hidden">
           <div className="flex items-center gap-3">
             <div className="flex h-14 w-14 items-center justify-center rounded-[24px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white" }}>
-              <Trophy className="h-7 w-7" />
+              <img src={brandTrophyImage} alt="World Cup trophy" className="h-12 w-12 object-contain" />
             </div>
             <div>
-              <div className="text-lg font-black">世界杯竞猜局</div>
-              <div className="text-xs md3-subtle">World Cup Prediction Club</div>
+              <div className="text-lg font-black">来来来聪明的小孩</div>
+              <div className="text-xs md3-subtle">world cup 2026</div>
             </div>
           </div>
           <div className="mt-5 rounded-[24px] border p-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 64%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
@@ -1712,9 +1711,9 @@ function AuthScreen({ onSignedIn }) {
       <div className="w-full max-w-md">
         <div className="mb-4 text-center sm:mb-6">
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-[24px] sm:mb-4 sm:h-16 sm:w-16 sm:rounded-[28px]" style={{ background: "linear-gradient(135deg, var(--md-sys-color-secondary), var(--md-sys-color-primary))", color: "white", boxShadow: "var(--md-shadow-2)" }}>
-            <Trophy className="h-7 w-7 sm:h-8 sm:w-8" />
+            <img src={brandTrophyImage} alt="World Cup trophy" className="h-12 w-12 object-contain sm:h-14 sm:w-14" />
           </div>
-          <h1 className="text-[2rem] font-black leading-tight sm:text-3xl">世界杯竞猜局</h1>
+          <h1 className="text-[2rem] font-black leading-tight sm:text-3xl">来来来聪明的小孩</h1>
         </div>
         <Card className="px-4 py-4 sm:px-5 sm:py-5">
           <M3SegmentedControl
