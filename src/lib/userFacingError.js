@@ -18,6 +18,8 @@ function getContextFallback(context) {
     match_lock_save: "比赛锁定状态更新失败，请稍后重试。",
     fun_prediction_save: "趣味预测提交失败，请稍后重试。",
     fun_results_save: "趣味预测答案保存失败，请稍后重试。",
+    sponsor_prediction_save: "冠名预测提交失败，请稍后重试。",
+    sponsor_prediction_result_save: "冠名预测答案保存失败，请稍后重试。",
     profile_save: "个人资料更新失败，请稍后重试。",
     user_camp_save: "阵营分配更新失败，请稍后重试。",
     user_admin_save: "管理员权限更新失败，请稍后重试。",
