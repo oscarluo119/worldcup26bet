@@ -22,7 +22,13 @@ function TeamRadarChart({ profile }) {
   }, [profile]);
 
   return (
-    <div className="rounded-[22px] border px-3 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)" }}>
+    <div
+      className="rounded-[22px] border px-3 py-3"
+      style={{
+        borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent)",
+        background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)",
+      }}
+    >
       <div className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] md3-subtle">六维战力</div>
       <div className="flex items-center gap-3">
         <svg viewBox="0 0 152 152" className="h-32 w-32 shrink-0">
@@ -90,6 +96,22 @@ function TeamRadarChart({ profile }) {
   );
 }
 
+function InfoBlock({ label, primary, secondary }) {
+  return (
+    <div
+      className="rounded-[18px] border px-3 py-2.5"
+      style={{
+        borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)",
+        background: "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 72%, transparent)",
+      }}
+    >
+      <div className="text-[11px] font-black uppercase tracking-[0.16em] md3-subtle">{label}</div>
+      <div className="mt-1 text-sm font-bold text-slate-100">{primary}</div>
+      {secondary ? <div className="mt-1 text-xs text-slate-300">{secondary}</div> : null}
+    </div>
+  );
+}
+
 export function TeamProfileCard({ profile, className = "" }) {
   if (!profile) return null;
 
@@ -102,7 +124,7 @@ export function TeamProfileCard({ profile, className = "" }) {
 
   return (
     <div
-      className={joinClasses("w-[min(22rem,calc(100vw-2rem))] rounded-[24px] border p-3 text-left shadow-2xl backdrop-blur-xl", className)}
+      className={joinClasses("w-[min(24rem,calc(100vw-2rem))] rounded-[24px] border p-3 text-left shadow-2xl backdrop-blur-xl", className)}
       style={{
         borderColor: "rgba(167, 243, 208, 0.22)",
         background: "linear-gradient(180deg, rgba(15, 23, 42, 0.7), rgba(8, 15, 28, 0.42))",
@@ -111,31 +133,56 @@ export function TeamProfileCard({ profile, className = "" }) {
       }}
     >
       <div className="mb-3 flex items-start gap-3">
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px]" style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--md-sys-color-primary-container) 90%, transparent), color-mix(in srgb, var(--md-sys-color-tertiary-container) 76%, transparent))" }}>
-          {flag.type === "image" ? <img src={flag.src} alt={flag.alt} className="h-8 w-10 rounded-[5px] object-cover shadow-sm" loading="lazy" /> : <span className="text-2xl">{flag.emoji || "🏳️"}</span>}
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px]"
+          style={{
+            background:
+              "linear-gradient(135deg, color-mix(in srgb, var(--md-sys-color-primary-container) 90%, transparent), color-mix(in srgb, var(--md-sys-color-tertiary-container) 76%, transparent))",
+          }}
+        >
+          {flag.type === "image" ? (
+            <img src={flag.src} alt={flag.alt} className="h-8 w-10 rounded-[5px] object-cover shadow-sm" loading="lazy" />
+          ) : (
+            <span className="text-2xl">{flag.emoji || "🏳️"}</span>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-lg font-black leading-5">{profile.displayNameZh}</div>
           <div className="mt-1 text-sm text-slate-300">{profile.teamName}</div>
-          <div className="mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-primary-container) 88%, transparent)", color: "var(--md-sys-color-on-primary-container)" }}>
-            FIFA排名 #{profile.fifaRank}
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div
+              className="rounded-[16px] border px-2.5 py-2"
+              style={{
+                borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)",
+                background: "color-mix(in srgb, var(--md-sys-color-primary-container) 72%, transparent)",
+              }}
+            >
+              <div className="text-[10px] font-black uppercase tracking-[0.16em] md3-subtle">世界排名</div>
+              <div className="mt-1 text-sm font-black text-slate-50">FIFA #{profile.fifaRank}</div>
+            </div>
+            <div
+              className="rounded-[16px] border px-2.5 py-2"
+              style={{
+                borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)",
+                background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 72%, transparent)",
+              }}
+            >
+              <div className="text-[10px] font-black uppercase tracking-[0.16em] md3-subtle">所属大洲</div>
+              <div className="mt-1 text-sm font-black text-slate-50">{profile.continent} / {profile.confederation}</div>
+            </div>
           </div>
         </div>
       </div>
+
       <TeamRadarChart profile={profile} />
+
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div className="rounded-[18px] border px-3 py-2.5" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 72%, transparent)" }}>
-          <div className="text-[11px] font-black uppercase tracking-[0.16em] md3-subtle">主教练</div>
-          <div className="mt-1 text-sm font-bold text-slate-100">{profile.coach}</div>
-        </div>
-        <div className="rounded-[18px] border px-3 py-2.5" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 58%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 72%, transparent)" }}>
-          <div className="text-[11px] font-black uppercase tracking-[0.16em] md3-subtle">头号球星</div>
-          <div className="mt-1 text-sm font-bold text-slate-100">{profile.starPlayer}</div>
-        </div>
+        <InfoBlock label="主教练" primary={profile.coach} />
+        <InfoBlock label="最高身价" primary={profile.topValuablePlayer} secondary={profile.topValuablePlayerValue} />
+        <InfoBlock label="总身价" primary={profile.totalSquadValue} />
+        <InfoBlock label="上届世界杯" primary={profile.lastWorldCupResult} />
       </div>
-      <div className="mt-3 inline-flex rounded-full px-3 py-1.5 text-xs font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 86%, transparent)", color: "var(--md-sys-color-on-secondary-container)" }}>
-        {profile.tag}
-      </div>
+
     </div>
   );
 }
@@ -151,16 +198,17 @@ export function TeamProfileTrigger({ name, countryCode = "", children }) {
 
   useEffect(() => {
     if (!open) return undefined;
+
     function updatePosition() {
       const node = wrapperRef.current;
       if (!node) return;
       const rect = node.getBoundingClientRect();
-      const estimatedWidth = Math.min(352, window.innerWidth - 16);
+      const estimatedWidth = Math.min(384, window.innerWidth - 16);
       const preferredLeft = rect.left;
       const maxLeft = Math.max(8, window.innerWidth - estimatedWidth - 8);
       const nextLeft = Math.min(preferredLeft, maxLeft);
+      const cardHeight = 430;
       const spaceBelow = window.innerHeight - rect.bottom;
-      const cardHeight = 360;
       const showAbove = spaceBelow < cardHeight && rect.top > cardHeight;
       setPosition({
         left: Math.max(8, nextLeft),
@@ -171,8 +219,11 @@ export function TeamProfileTrigger({ name, countryCode = "", children }) {
     updatePosition();
 
     function handlePointerDown(event) {
-      if (!wrapperRef.current?.contains(event.target) && !event.target.closest?.("[data-team-profile-card='true']")) setOpen(false);
+      if (!wrapperRef.current?.contains(event.target) && !event.target.closest?.("[data-team-profile-card='true']")) {
+        setOpen(false);
+      }
     }
+
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
     document.addEventListener("pointerdown", handlePointerDown);
@@ -223,20 +274,21 @@ export function TeamProfileTrigger({ name, countryCode = "", children }) {
     event.stopPropagation();
   }
 
-  const floatingCard = open && typeof document !== "undefined"
-    ? createPortal(
-        <div
-          data-team-profile-card="true"
-          className="pointer-events-auto z-[220]"
-          style={{ position: "fixed", left: position.left, top: position.top }}
-          onMouseEnter={clearCloseTimer}
-          onMouseLeave={scheduleClose}
-        >
-          <TeamProfileCard profile={profile} />
-        </div>,
-        document.body,
-      )
-    : null;
+  const floatingCard =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            data-team-profile-card="true"
+            className="pointer-events-auto z-[220]"
+            style={{ position: "fixed", left: position.left, top: position.top }}
+            onMouseEnter={clearCloseTimer}
+            onMouseLeave={scheduleClose}
+          >
+            <TeamProfileCard profile={profile} />
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <span

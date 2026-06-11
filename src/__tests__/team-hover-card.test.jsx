@@ -1,10 +1,10 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { TeamProfileCard } from "../components/teamProfileCard";
 import { TEAM_PROFILE_DIMENSIONS, getTeamProfileByName } from "../lib/teamProfiles";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 const teamProfileSource = readFileSync(resolve(process.cwd(), "src/components/teamProfileCard.jsx"), "utf8");
 
@@ -15,7 +15,7 @@ describe("team hover card", () => {
       "防守硬度",
       "中场控制",
       "速度冲击",
-      "阵容深度",
+      "定位球威胁",
       "大赛经验",
     ]);
   });
@@ -23,26 +23,38 @@ describe("team hover card", () => {
   test("maps common team display names to local profiles", () => {
     expect(getTeamProfileByName("法国")).toMatchObject({
       key: "FRA",
-      fifaRank: 2,
     });
     expect(getTeamProfileByName("英格兰")).toMatchObject({
       key: "ENG",
       countryCode: "gb-eng",
     });
-    expect(getTeamProfileByName("第73场胜者")).toBeNull();
+    expect(getTeamProfileByName("第一场胜者")).toBeNull();
   });
 
-  test("renders the compact team scouting content", () => {
+  test("stores the refreshed Brazil coach snapshot in Chinese", () => {
+    expect(getTeamProfileByName("巴西")).toMatchObject({
+      key: "BRA",
+      coach: "卡洛·安切洛蒂",
+      topValuablePlayer: "维尼修斯·儒尼奥尔",
+      confederation: "CONMEBOL",
+      fifaRank: 6,
+    });
+  });
+
+  test("renders the richer scouting content", () => {
     const profile = getTeamProfileByName("法国");
     const markup = renderToStaticMarkup(<TeamProfileCard profile={profile} />);
 
     expect(markup).toContain("法国");
     expect(markup).toContain("France");
-    expect(markup).toContain("FIFA排名 #2");
+    expect(markup).toContain("世界排名");
+    expect(markup).toContain("所属大洲");
     expect(markup).toContain("主教练");
-    expect(markup).toContain("头号球星");
-    expect(markup).toContain("高压逼抢");
+    expect(markup).toContain("最高身价");
+    expect(markup).toContain("总身价");
+    expect(markup).toContain("上届世界杯");
     expect(markup).toContain("六维战力");
+    expect(markup).not.toContain("资料快照");
   });
 
   test("uses a translucent glass-like card shell", () => {
