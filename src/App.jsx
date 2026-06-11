@@ -11,6 +11,7 @@ import {
   ChevronUp,
   Crown,
   Eye,
+  ExternalLink,
   Flame,
   Home,
   KeyRound,
@@ -20,6 +21,7 @@ import {
   Mail,
   Medal,
   MoonStar,
+  Newspaper,
   Plus,
   Search,
   Settings,
@@ -69,7 +71,22 @@ import {
   mapSponsorPredictions,
   splitSponsorPredictionClock,
 } from "./lib/sponsorPredictions";
+import { DEFAULT_WORLD_CUP_NEWS_IMAGE, FALLBACK_WORLD_CUP_NEWS, fetchWorldCupNews, isFallbackWorldCupNews } from "./lib/worldcupNews";
 import { normalizeUserFacingError } from "./lib/userFacingError";
+
+const WORLD_CUP_NEWS_CACHE_KEY = "worldcup-news-cache-v2";
+
+function readCachedWorldCupNews() {
+  if (typeof window === "undefined") return [];
+  const cached = window.localStorage.getItem(WORLD_CUP_NEWS_CACHE_KEY);
+  if (!cached) return [];
+  try {
+    const items = JSON.parse(cached);
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
 
 const STAGES = {
   GROUP: { label: "小组赛", multiplier: 1 },
@@ -1735,6 +1752,122 @@ function RegulationSettlementNotice({ match, className = "" }) {
   return <div className={`rounded-[18px] border px-3 py-2 text-xs ${className}`} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-secondary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 58%, transparent)", color: "var(--md-sys-color-on-secondary-container)" }}>竞猜已按常规时间结算，实时比分仅供观赛。</div>;
 }
 
+function WorldCupNewsPreviewDialog({ item, onClose }) {
+  if (!item) return null;
+  return (
+    <div className="md3-dialog-backdrop" role="dialog" aria-modal="true">
+      <div className="md3-dialog max-w-2xl">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Pill className="bg-emerald-500/15 text-emerald-200">世界杯新闻</Pill>
+          <Pill>{item.source === "hupu" ? "虎扑" : "懂球帝"}</Pill>
+        </div>
+        <div className="text-2xl font-black leading-8">{item.title}</div>
+        <div className="mt-2 text-xs md3-subtle">{formatDateTime(item.publishedAt || item.fetchedAt)}</div>
+        <NewsThumbnail item={item} className="mt-4 max-h-64 w-full rounded-[24px] object-cover" />
+        {item.summary ? <p className="mt-4 text-sm leading-7 md3-subtle">{item.summary}</p> : null}
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <M3Button tone="text" onClick={onClose}>关闭</M3Button>
+          <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex">
+            <M3Button tone="filled">
+              <span className="inline-flex items-center gap-2">
+                查看原文
+                <ExternalLink className="h-4 w-4" />
+              </span>
+            </M3Button>
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewsThumbnail({ item, className = "", fixedHeightClassName = "h-32" }) {
+  const [src, setSrc] = useState(item?.thumbnailUrl || DEFAULT_WORLD_CUP_NEWS_IMAGE);
+
+  React.useEffect(() => {
+    setSrc(item?.thumbnailUrl || DEFAULT_WORLD_CUP_NEWS_IMAGE);
+  }, [item?.thumbnailUrl, item?.id]);
+
+  return (
+    <img
+      src={src || DEFAULT_WORLD_CUP_NEWS_IMAGE}
+      alt={item?.title || "世界杯新闻配图"}
+      className={`${fixedHeightClassName} w-full object-cover ${className}`.trim()}
+      loading="lazy"
+      onError={() => setSrc(DEFAULT_WORLD_CUP_NEWS_IMAGE)}
+    />
+  );
+}
+
+function WorldCupNewsMarquee({ items, loading, onOpenNews }) {
+  const scrollRef = useRef(null);
+  const [paused, setPaused] = useState(false);
+  const list = items.length > 1 ? [...items, ...items] : items;
+
+  React.useEffect(() => {
+    const node = scrollRef.current;
+    if (!node || paused || items.length <= 1) return undefined;
+
+    const timer = window.setInterval(() => {
+      if (!node) return;
+      const next = node.scrollLeft + 1;
+      const loopPoint = node.scrollWidth / 2;
+      node.scrollLeft = next >= loopPoint ? 0 : next;
+    }, 24);
+
+    return () => window.clearInterval(timer);
+  }, [items.length, paused]);
+
+  return (
+    <Card className="md3-filled-card !p-3.5 sm:!p-5">
+      <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
+        <div>
+          <h2 className="md3-section-title text-[1.15rem] sm:text-[1.5rem]">世界杯新闻</h2>
+        </div>
+        <Pill>{items.length} 条</Pill>
+      </div>
+
+      {loading && !items.length ? (
+        <EmptyState icon={Newspaper} title="正在刷新世界杯新闻" description="稍等一下，新闻流正在更新。" />
+      ) : !items.length ? (
+        <EmptyState icon={Newspaper} title="暂时没有可展示的世界杯新闻" description="新闻抓取恢复后，这里会自动出现最新资讯。" />
+      ) : (
+        <div
+          ref={scrollRef}
+          className="overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+        >
+          <div className="flex min-w-max gap-3 pr-3">
+            {list.map((item, index) => (
+              <button
+                key={`${item.id}-${index}`}
+                type="button"
+                onClick={() => onOpenNews(item)}
+                className="group w-[18rem] shrink-0 overflow-hidden rounded-[24px] border text-left transition hover:-translate-y-0.5"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent)",
+                  background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 82%, transparent)",
+                }}
+              >
+                <NewsThumbnail item={item} />
+                <div className="p-4">
+                  <div className="mb-2 flex items-center gap-2 text-[11px]">
+                    <Pill className="bg-emerald-500/15 text-emerald-200">{item.source === "hupu" ? "虎扑" : "懂球帝"}</Pill>
+                    <span className="md3-subtle">{formatDateOnly(item.publishedAt || item.fetchedAt)}</span>
+                  </div>
+                  <div className="line-clamp-2 text-sm font-black leading-6 text-slate-100 group-hover:text-[color:var(--md-sys-color-primary)]">{item.title}</div>
+                  {item.summary ? <div className="mt-2 line-clamp-2 text-xs leading-5 md3-subtle">{item.summary}</div> : null}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function WorldCupPredictionMVP() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1758,6 +1891,9 @@ export default function WorldCupPredictionMVP() {
   const [sponsorPredictions, setSponsorPredictions] = useState(emptySponsorPredictions);
   const [sponsorPredictionResults, setSponsorPredictionResults] = useState(emptySponsorPredictionResults);
   const [worldCupResults, setWorldCupResults] = useState({});
+  const [worldCupNews, setWorldCupNews] = useState(() => readCachedWorldCupNews());
+  const [newsLoading, setNewsLoading] = useState(() => readCachedWorldCupNews().length === 0);
+  const [selectedNewsItem, setSelectedNewsItem] = useState(null);
   const [selectedMatchId, setSelectedMatchId] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE[0]?.id || "");
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
@@ -1818,6 +1954,43 @@ export default function WorldCupPredictionMVP() {
   function closeDialog() {
     setDialog({ open: false, title: "", description: "", confirmLabel: "确认", tone: "filled", onConfirm: null });
   }
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorldCupNews() {
+      setNewsLoading(true);
+      const cachedItems = readCachedWorldCupNews();
+      try {
+        const items = await fetchWorldCupNews({
+          supabase,
+          isSupabaseConfigured,
+          supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+          supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        });
+        if (cancelled) return;
+        const nextItems = isFallbackWorldCupNews(items) && cachedItems.length ? cachedItems : items;
+        setWorldCupNews(nextItems);
+        if (typeof window !== "undefined" && !isFallbackWorldCupNews(nextItems)) {
+          window.localStorage.setItem(WORLD_CUP_NEWS_CACHE_KEY, JSON.stringify(nextItems));
+        }
+      } catch {
+        if (cancelled) return;
+        if (cachedItems.length) {
+          setWorldCupNews(cachedItems);
+          return;
+        }
+        setWorldCupNews(FALLBACK_WORLD_CUP_NEWS);
+      } finally {
+        if (!cancelled) setNewsLoading(false);
+      }
+    }
+
+    loadWorldCupNews();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -2380,7 +2553,7 @@ export default function WorldCupPredictionMVP() {
         />
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
-          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} />}
+          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} />}
           {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
@@ -2408,11 +2581,12 @@ export default function WorldCupPredictionMVP() {
           closeDialog();
         }}
       />
+      <WorldCupNewsPreviewDialog item={selectedNewsItem} onClose={() => setSelectedNewsItem(null)} />
     </div>
   );
 }
 
-function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections }) {
+function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections, worldCupNews, newsLoading, onOpenNews }) {
   const sortedMatches = [...matches].sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const todayMatches = sortedMatches.filter((match) => isSameBeijingDate(match.kickoff, currentTime));
   const soonLockMatches = sortedMatches.filter((match) => !isMatchLocked(match, currentTime)).slice(0, 4);
@@ -2461,6 +2635,8 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
           <EmptyState icon={CalendarDays} title="当前没有待提交的比赛" description="等新的赛程开放后，这里会自动出现最快截止的那一场。" actionLabel="查看积分榜" onAction={() => setActiveTab("ranking")} />
         )}
       </Card>
+
+      <WorldCupNewsMarquee items={worldCupNews} loading={newsLoading} onOpenNews={onOpenNews} />
 
       <Card className="md3-filled-card !p-3.5 sm:!p-5">
         <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
