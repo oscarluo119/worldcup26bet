@@ -92,4 +92,10 @@ describe("match prediction groups", () => {
     expect(appSource).toContain("<TeamName name={match.home} logo={match.homeLogo} interactiveProfile />");
     expect(appSource).toContain("<TeamName name={match.away} logo={match.awayLogo} interactiveProfile />");
   });
+  test("adds mainstream odds and match preview sections to the single-match card", () => {
+    expect(appSource).toContain("主流赔率");
+    expect(appSource).toContain("比赛前瞻");
+    expect(appSource).not.toContain("AI比赛前瞻");
+    expect(appSource).not.toContain("结构化生成");
+  });
 });

@@ -7,19 +7,120 @@ function joinClasses(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-function TeamRadarChart({ profile }) {
-  const points = useMemo(() => {
-    const center = 76;
-    const radius = 54;
-    return TEAM_PROFILE_DIMENSIONS.map((dimension, index) => {
-      const value = profile.ratings[index] ?? 0;
-      const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
-      const scaled = radius * (value / 100);
-      const x = center + Math.cos(angle) * scaled;
-      const y = center + Math.sin(angle) * scaled;
-      return `${x},${y}`;
-    }).join(" ");
-  }, [profile]);
+function buildRadarPoints(profile, center, radius) {
+  return TEAM_PROFILE_DIMENSIONS.map((dimension, index) => {
+    const value = profile?.ratings?.[index] ?? 0;
+    const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
+    const scaled = radius * (value / 100);
+    const x = center + Math.cos(angle) * scaled;
+    const y = center + Math.sin(angle) * scaled;
+    return `${x},${y}`;
+  }).join(" ");
+}
+
+function RadarGraphic({
+  profiles,
+  size = 152,
+  radius = 54,
+  lineRadius = 56,
+  ringRadii = [18, 34, 50, 54],
+  labelOffset = 0,
+  canvasPadding = 0,
+}) {
+  const totalSize = size + (canvasPadding * 2);
+  const center = totalSize / 2;
+  const pointSets = useMemo(
+    () =>
+      profiles.filter(Boolean).map((profile) => ({
+        key: profile.key || profile.displayNameZh,
+        profile,
+        points: buildRadarPoints(profile, center, radius),
+      })),
+    [center, profiles, radius],
+  );
+
+  const palette = [
+    {
+      fill: "rgba(52, 211, 153, 0.26)",
+      stroke: "rgba(110,231,183,0.9)",
+      dot: "rgba(167,243,208,1)",
+    },
+    {
+      fill: "rgba(56, 189, 248, 0.2)",
+      stroke: "rgba(125, 211, 252, 0.96)",
+      dot: "rgba(186, 230, 253, 1)",
+    },
+  ];
+
+  return (
+    <svg viewBox={`0 0 ${totalSize} ${totalSize}`} className="h-full w-full shrink-0 overflow-visible">
+      {ringRadii.map((ring, index) => (
+        <polygon
+          key={ring}
+          points={TEAM_PROFILE_DIMENSIONS.map((_, pointIndex) => {
+            const angle = (-Math.PI / 2) + (pointIndex * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
+            return `${center + Math.cos(angle) * ring},${center + Math.sin(angle) * ring}`;
+          }).join(" ")}
+          fill="none"
+          stroke={index === ringRadii.length - 1 ? "rgba(110,231,183,0.2)" : "rgba(148,163,184,0.12)"}
+          strokeWidth="1"
+        />
+      ))}
+      {TEAM_PROFILE_DIMENSIONS.map((_, index) => {
+        const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
+        return (
+          <line
+            key={index}
+            x1={center}
+            y1={center}
+            x2={center + Math.cos(angle) * lineRadius}
+            y2={center + Math.sin(angle) * lineRadius}
+            stroke="rgba(148,163,184,0.14)"
+            strokeWidth="1"
+          />
+        );
+      })}
+      {pointSets.map((item, profileIndex) => (
+        <g key={item.key}>
+          <polygon points={item.points} fill={palette[profileIndex]?.fill || palette[0].fill} stroke={palette[profileIndex]?.stroke || palette[0].stroke} strokeWidth="2.5" />
+          {TEAM_PROFILE_DIMENSIONS.map((dimension, index) => {
+            const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
+            return (
+              <circle
+                key={`${item.key}-${dimension.key}`}
+                cx={center + Math.cos(angle) * (radius * ((item.profile?.ratings?.[index] ?? 0) / 100))}
+                cy={center + Math.sin(angle) * (radius * ((item.profile?.ratings?.[index] ?? 0) / 100))}
+                r="2.75"
+                fill={palette[profileIndex]?.dot || palette[0].dot}
+              />
+            );
+          })}
+        </g>
+      ))}
+      {labelOffset > 0
+        ? TEAM_PROFILE_DIMENSIONS.map((dimension, index) => {
+            const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
+            return (
+              <text
+                key={dimension.key}
+                x={center + Math.cos(angle) * (radius + labelOffset + (Math.abs(Math.cos(angle)) > 0.85 ? 6 : 0))}
+                y={center + Math.sin(angle) * (radius + labelOffset + (Math.abs(Math.sin(angle)) > 0.85 ? 4 : 0))}
+                fill="rgba(226, 232, 240, 0.72)"
+                fontSize="11"
+                textAnchor={Math.cos(angle) > 0.3 ? "start" : Math.cos(angle) < -0.3 ? "end" : "middle"}
+                dominantBaseline={Math.sin(angle) > 0.5 ? "hanging" : Math.sin(angle) < -0.5 ? "auto" : "middle"}
+              >
+                {dimension.label}
+              </text>
+            );
+          })
+        : null}
+    </svg>
+  );
+}
+
+export function TeamRadarChart({ profile }) {
+  if (!profile) return null;
 
   return (
     <div
@@ -31,47 +132,9 @@ function TeamRadarChart({ profile }) {
     >
       <div className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] md3-subtle">六维战力</div>
       <div className="flex items-center gap-3">
-        <svg viewBox="0 0 152 152" className="h-32 w-32 shrink-0">
-          {[18, 34, 50, 54].map((ring, index) => (
-            <polygon
-              key={ring}
-              points={TEAM_PROFILE_DIMENSIONS.map((_, pointIndex) => {
-                const angle = (-Math.PI / 2) + (pointIndex * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
-                return `${76 + Math.cos(angle) * ring},${76 + Math.sin(angle) * ring}`;
-              }).join(" ")}
-              fill="none"
-              stroke={index === 3 ? "rgba(110,231,183,0.2)" : "rgba(148,163,184,0.12)"}
-              strokeWidth="1"
-            />
-          ))}
-          {TEAM_PROFILE_DIMENSIONS.map((_, index) => {
-            const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
-            return (
-              <line
-                key={index}
-                x1="76"
-                y1="76"
-                x2={76 + Math.cos(angle) * 56}
-                y2={76 + Math.sin(angle) * 56}
-                stroke="rgba(148,163,184,0.14)"
-                strokeWidth="1"
-              />
-            );
-          })}
-          <polygon points={points} fill="rgba(52, 211, 153, 0.26)" stroke="rgba(110,231,183,0.9)" strokeWidth="2.5" />
-          {TEAM_PROFILE_DIMENSIONS.map((dimension, index) => {
-            const angle = (-Math.PI / 2) + (index * (Math.PI * 2 / TEAM_PROFILE_DIMENSIONS.length));
-            return (
-              <circle
-                key={dimension.key}
-                cx={76 + Math.cos(angle) * (54 * ((profile.ratings[index] ?? 0) / 100))}
-                cy={76 + Math.sin(angle) * (54 * ((profile.ratings[index] ?? 0) / 100))}
-                r="2.75"
-                fill="rgba(167,243,208,1)"
-              />
-            );
-          })}
-        </svg>
+        <div className="h-32 w-32 shrink-0">
+          <RadarGraphic profiles={[profile]} />
+        </div>
         <div className="min-w-0 flex-1 space-y-2">
           {TEAM_PROFILE_DIMENSIONS.map((dimension, index) => (
             <div key={dimension.key}>
@@ -91,6 +154,32 @@ function TeamRadarChart({ profile }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function TeamRadarComparison({ homeProfile, awayProfile, className = "" }) {
+  const profiles = [homeProfile, awayProfile].filter(Boolean);
+  if (!profiles.length) return null;
+
+  return (
+    <div
+      className={joinClasses("rounded-[24px] border px-4 py-4", className)}
+      style={{
+        borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent)",
+        background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 80%, transparent)",
+      }}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="text-[11px] font-black uppercase tracking-[0.18em] md3-subtle">六维战力</div>
+        <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold">
+          {homeProfile ? <span className="inline-flex items-center gap-1.5 text-emerald-100"><span className="h-2.5 w-2.5 rounded-full bg-emerald-300" />{homeProfile.displayNameZh}</span> : null}
+          {awayProfile ? <span className="inline-flex items-center gap-1.5 text-sky-100"><span className="h-2.5 w-2.5 rounded-full bg-sky-300" />{awayProfile.displayNameZh}</span> : null}
+        </div>
+      </div>
+      <div className="mx-auto h-[20rem] max-w-[24rem]">
+        <RadarGraphic profiles={profiles} size={248} radius={78} lineRadius={82} ringRadii={[26, 50, 72, 78]} labelOffset={24} canvasPadding={32} />
       </div>
     </div>
   );
@@ -182,7 +271,6 @@ export function TeamProfileCard({ profile, className = "" }) {
         <InfoBlock label="总身价" primary={profile.totalSquadValue} />
         <InfoBlock label="上届世界杯" primary={profile.lastWorldCupResult} />
       </div>
-
     </div>
   );
 }

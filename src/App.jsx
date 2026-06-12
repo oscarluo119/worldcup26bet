@@ -57,10 +57,12 @@ import {
   getAchievementTheme,
 } from "./achievements";
 import brandTrophyImage from "./assets/brand-trophy.png";
-import { TeamProfileTrigger } from "./components/teamProfileCard";
+import { TeamProfileTrigger, TeamRadarComparison } from "./components/teamProfileCard";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
+import { buildMatchInsights } from "./lib/matchInsights";
+import { fetchMatchOdds } from "./lib/matchOdds";
 import { buildMatchPredictionGroups, buildPredictionExportFileName } from "./lib/matchPredictionGroups";
 import {
   FIRST_GOAL_TIME_EVENT_ID,
@@ -3120,12 +3122,53 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
   React.useEffect(() => { const next = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id); setHome(next?.home ?? 0); setAway(next?.away ?? 0); }, [match.id, currentPlayerId, predictions]);
   const locked = isMatchLocked(match, now);
   const showAllPredictions = locked || match.status !== "open";
+  const insights = useMemo(() => buildMatchInsights(match), [match]);
+  const [oddsState, setOddsState] = useState(() => ({
+    bookmakers: insights.bookmakers,
+    probabilities: insights.probabilities,
+    status: "idle",
+  }));
   const { visibleGroups, missingCount } = useMemo(() => buildMatchPredictionGroups({
     players,
     predictions,
     match,
     currentPlayerId,
   }), [players, predictions, match, currentPlayerId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    setOddsState({
+      bookmakers: insights.bookmakers,
+      probabilities: insights.probabilities,
+      status: "loading",
+    });
+
+    fetchMatchOdds({
+      supabase,
+      isSupabaseConfigured,
+      match,
+    }).then((payload) => {
+      if (cancelled) return;
+      const readyCount = payload.bookmakers.filter((item) => item.status === "ready").length;
+      setOddsState({
+        bookmakers: payload.bookmakers,
+        probabilities: payload.probabilities,
+        status: readyCount ? "ready" : "empty",
+      });
+    }).catch(() => {
+      if (cancelled) return;
+      setOddsState({
+        bookmakers: insights.bookmakers,
+        probabilities: null,
+        status: "error",
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [insights.bookmakers, insights.probabilities, match.away, match.home, match.id, match.kickoff, match.no]);
 
   async function handleExportPredictionBoard() {
     if (!exportRef.current || isExporting) return;
@@ -3150,8 +3193,24 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
 
   return (
     <div>
-      <div className="md3-outline-card md3-card p-4"><div className="text-sm font-bold md3-subtle">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black md3-subtle">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><M3Button disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</M3Button>{locked && <div className="mt-3 text-center text-xs md3-subtle">比赛已锁定，不能再修改预测。</div>}</div>
+      <div className="md3-outline-card md3-card p-4 sm:p-5">
+        <div className="text-sm font-bold md3-subtle">我的比分预测</div>
+        <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-center">
+          <CompactScoreField label={match.home} value={home} disabled={locked} onChange={setHome} />
+          <div className="hidden text-2xl font-black md3-subtle xl:block">:</div>
+          <CompactScoreField label={match.away} value={away} disabled={locked} onChange={setAway} />
+          <M3Button disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="flex items-center justify-center gap-2 px-5 py-3 font-black xl:ml-auto xl:min-w-[144px]">
+            {existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+            {existing ? "修改预测" : "提交预测"}
+          </M3Button>
+        </div>
+        {locked ? <div className="mt-3 text-xs md3-subtle">比赛已锁定，不能再修改预测。</div> : null}
+      </div>
       <RegulationSettlementNotice match={match} className="mt-4" />
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.02fr_1.18fr]">
+        <MatchOddsCard oddsState={oddsState} />
+        <MatchPreviewCard match={match} insights={insights} />
+      </div>
       <div className="mt-5">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
@@ -3172,6 +3231,102 @@ function MatchPredictionDetail({ match, players, predictions, currentPlayerId, o
           </>
         ) : (
           <EmptyState icon={Eye} title="预测将在开赛后公开" description="朋友预测会在开赛后按主胜、平局、客胜自动分组展示，未提交只显示人数。" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CompactScoreField({ label, value, disabled, onChange }) {
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="mb-2 truncate text-xs font-bold md3-subtle">{label}</div>
+      <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-3 text-center text-2xl font-black disabled:opacity-50" />
+    </div>
+  );
+}
+
+function MatchOddsCard({ oddsState }) {
+  const readyCount = oddsState.bookmakers.filter((bookmaker) => bookmaker.status === "ready").length;
+
+  return (
+    <div className="md3-outline-card md3-card p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-black">主流赔率</h3>
+        <Pill>{`${readyCount}/${oddsState.bookmakers.length} 已就绪`}</Pill>
+      </div>
+      <div className="space-y-2">
+        <div className="grid grid-cols-[96px_repeat(3,minmax(0,1fr))] gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] md3-subtle">
+          <span>公司</span>
+          <span>主胜</span>
+          <span>平</span>
+          <span>客胜</span>
+        </div>
+        {oddsState.bookmakers.map((bookmaker) => (
+          <div key={bookmaker.key} className={cn("grid grid-cols-[96px_repeat(3,minmax(0,1fr))] gap-2 rounded-[18px] border px-3 py-2.5 text-sm", bookmaker.status === "missing" ? "text-slate-500" : "text-slate-100")} style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 54%, transparent)", background: bookmaker.status === "missing" ? "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 72%, transparent)" : "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)" }}>
+            <span className="truncate font-bold">{bookmaker.label}</span>
+            <span className="font-black tabular-nums">{Number.isFinite(bookmaker.homeOdds) ? bookmaker.homeOdds.toFixed(2) : "暂缺"}</span>
+            <span className="font-black tabular-nums">{Number.isFinite(bookmaker.drawOdds) ? bookmaker.drawOdds.toFixed(2) : "暂缺"}</span>
+            <span className="font-black tabular-nums">{Number.isFinite(bookmaker.awayOdds) ? bookmaker.awayOdds.toFixed(2) : "暂缺"}</span>
+          </div>
+        ))}
+      </div>
+      {oddsState.probabilities ? (
+        <div className="mt-4 rounded-[20px] border px-4 py-4" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)" }}>
+          <div className="mb-3 flex items-center justify-between gap-3 text-xs">
+            <span className="font-bold md3-subtle">去水综合概率</span>
+            <span className="md3-subtle">样本 {oddsState.probabilities.sampleSize} 家</span>
+          </div>
+          <ProbabilityBar label="主胜" value={oddsState.probabilities.home} tone="home" />
+          <ProbabilityBar label="平局" value={oddsState.probabilities.draw} tone="draw" />
+          <ProbabilityBar label="客胜" value={oddsState.probabilities.away} tone="away" />
+        </div>
+      ) : (
+        <div className="mt-4 rounded-[20px] border px-4 py-3 text-sm md3-subtle" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)" }}>
+          <div className="flex items-center gap-2">
+            {oddsState.status === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            <span>{oddsState.status === "loading" ? "正在抓取真实赔率" : "真实赔率暂不可用"}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProbabilityBar({ label, value, tone }) {
+  const toneStyles = {
+    home: "linear-gradient(90deg, rgba(16,185,129,0.85), rgba(134,239,172,0.95))",
+    draw: "linear-gradient(90deg, rgba(56,189,248,0.82), rgba(125,211,252,0.95))",
+    away: "linear-gradient(90deg, rgba(245,158,11,0.8), rgba(251,191,36,0.95))",
+  };
+
+  return (
+    <div className="mb-3 last:mb-0">
+      <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
+        <span className="font-bold">{label}</span>
+        <span className="font-black tabular-nums">{value}%</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-slate-950/55">
+        <div className="h-full rounded-full" style={{ width: `${value}%`, background: toneStyles[tone] }} />
+      </div>
+    </div>
+  );
+}
+
+function MatchPreviewCard({ match, insights }) {
+  return (
+    <div className="md3-outline-card md3-card p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-black">比赛前瞻</h3>
+        <Pill>{match.group}</Pill>
+      </div>
+      <div className="flex justify-center">
+        {insights.homeProfile || insights.awayProfile ? (
+          <TeamRadarComparison homeProfile={insights.homeProfile} awayProfile={insights.awayProfile} className="w-full max-w-[32rem] !px-3 !py-3" />
+        ) : (
+          <div className="rounded-[20px] border px-4 py-8 text-sm md3-subtle" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 82%, transparent)" }}>
+            六维图暂不可用
+          </div>
         )}
       </div>
     </div>
