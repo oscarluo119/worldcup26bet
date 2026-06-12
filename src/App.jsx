@@ -1,5 +1,6 @@
 ﻿import React, { useMemo, useState } from "react";
 import { useRef } from "react";
+import { toPng } from "html-to-image";
 import {
   ArrowDown,
   ArrowUp,
@@ -10,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   Crown,
+  Download,
   Eye,
   ExternalLink,
   Flame,
@@ -59,6 +61,7 @@ import { TeamProfileTrigger } from "./components/teamProfileCard";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
+import { buildMatchPredictionGroups, buildPredictionExportFileName } from "./lib/matchPredictionGroups";
 import {
   FIRST_GOAL_TIME_EVENT_ID,
   SPONSOR_PREDICTION_EVENTS,
@@ -2557,7 +2560,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
-          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} />}
+          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} />}
           {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={sponsorPredictionResults} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "sponsorPredictions" && <SponsorPredictionPanel currentPlayer={currentPlayer} players={players} matches={matches} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={sponsorPredictionResults} onSave={saveSponsorPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} />}
@@ -2857,7 +2860,7 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap gap-1.5 sm:gap-2">
-            <Pill>#{match.no}</Pill>
+            <Pill>第 {match.no} 场世界杯比赛</Pill>
             <Pill>{stage.label} x{stage.multiplier}</Pill>
             <MatchStatus match={match} />
             <MatchCountdown match={match} now={now} />
@@ -2877,7 +2880,7 @@ function getPlayerDisplayId(player) {
   return (player?.name || player?.email || "未命名用户").trim() || "未命名用户";
 }
 
-function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar }) {
+function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin }) {
   function handleMatchToggle(matchId) {
     setSelectedMatchId((prev) => (prev === matchId ? "" : matchId));
   }
@@ -2898,7 +2901,7 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
                 <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
                   <div className="relative z-10 border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
-                    <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} />
+                    <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} isAdmin={isAdmin} />
                   </div>
                 )}
               </div>
@@ -3107,93 +3110,145 @@ function ScheduleLargeCard({ match }) {
   );
 }
 
-function MatchPredictionDetail({ match, players, predictions, currentPlayerId, onSubmit, now = new Date(), onOpenPlayerProfile }) {
+function MatchPredictionDetail({ match, players, predictions, currentPlayerId, onSubmit, now = new Date(), onOpenPlayerProfile, isAdmin = false }) {
   const existing = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id);
   const [home, setHome] = useState(existing?.home ?? 0);
   const [away, setAway] = useState(existing?.away ?? 0);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportRef = useRef(null);
   React.useEffect(() => { const next = predictions.find((p) => p.playerId === currentPlayerId && p.matchId === match.id); setHome(next?.home ?? 0); setAway(next?.away ?? 0); }, [match.id, currentPlayerId, predictions]);
   const locked = isMatchLocked(match, now);
   const showAllPredictions = locked || match.status !== "open";
-  const groupedFriendPredictions = useMemo(() => {
-    const groups = {
-      H: [],
-      D: [],
-      A: [],
-      M: [],
-    };
+  const { visibleGroups, missingCount } = useMemo(() => buildMatchPredictionGroups({
+    players,
+    predictions,
+    match,
+    currentPlayerId,
+  }), [players, predictions, match, currentPlayerId]);
 
-    players.forEach((player) => {
-      const prediction = predictions.find((p) => p.playerId === player.id && p.matchId === match.id);
-      const entry = {
-        player,
-        prediction,
-        isMe: player.id === currentPlayerId,
-        points: calculatePoints(prediction, match),
-      };
-
-      if (!prediction) {
-        groups.M.push(entry);
-        return;
-      }
-
-      groups[getOutcome(prediction.home, prediction.away)].push(entry);
-    });
-
-    return [
-      { key: "H", title: "主胜", items: groups.H },
-      { key: "D", title: "平局", items: groups.D },
-      { key: "A", title: "客胜", items: groups.A },
-      { key: "M", title: "未提交", items: groups.M },
-    ].filter((group) => group.items.length > 0);
-  }, [players, predictions, match, currentPlayerId]);
+  async function handleExportPredictionBoard() {
+    if (!exportRef.current || isExporting) return;
+    setIsExporting(true);
+    try {
+      const dataUrl = await toPng(exportRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#0f2f22",
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = buildPredictionExportFileName(match);
+      link.click();
+    } catch (error) {
+      console.error("Failed to export prediction board", error);
+      window.alert("导出截图失败，请稍后重试。");
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   return (
     <div>
       <div className="md3-outline-card md3-card p-4"><div className="text-sm font-bold md3-subtle">我的比分预测</div><div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><ScoreInput label={match.home} value={home} disabled={locked} onChange={setHome} /><div className="pt-7 text-xl font-black md3-subtle">:</div><ScoreInput label={match.away} value={away} disabled={locked} onChange={setAway} /></div><M3Button disabled={locked} onClick={() => onSubmit(match.id, Number(home), Number(away))} className="mt-4 flex w-full items-center justify-center gap-2 font-black">{existing ? <CheckCircle2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}{existing ? "修改预测" : "提交预测"}</M3Button>{locked && <div className="mt-3 text-center text-xs md3-subtle">比赛已锁定，不能再修改预测。</div>}</div>
       <RegulationSettlementNotice match={match} className="mt-4" />
       <div className="mt-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-black">朋友预测</h3>
-          {!showAllPredictions && <Pill>开赛后公开</Pill>}
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-black">朋友预测</h3>
+            {showAllPredictions ? <Pill>{`未提交 ${missingCount} 人`}</Pill> : <Pill>开赛后公开</Pill>}
+          </div>
+          {showAllPredictions && isAdmin ? (
+            <M3Button disabled={isExporting} onClick={handleExportPredictionBoard} className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-black">
+              {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              导出截图
+            </M3Button>
+          ) : null}
         </div>
         {showAllPredictions ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {groupedFriendPredictions.map((group) => (
-              <div key={group.key} className="md3-outline-card md3-card p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="font-black">{group.title}</div>
-                  <Pill>{group.items.length} 人</Pill>
-                </div>
-                <div className="space-y-2">
-                  {group.items.map(({ player, prediction, isMe, points }) => (
-                    <div key={player.id} className="rounded-[20px] px-3 py-3" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 82%, transparent)" }}>
-                      <div className="flex items-center justify-between gap-3">
-                        <button onClick={() => onOpenPlayerProfile?.(player.id)} className="min-w-0 text-left">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate font-bold hover:text-[color:var(--md-sys-color-primary)]">
-                              {getPlayerDisplayId(player)}
-                              {prediction ? ` ${prediction.home}:${prediction.away}` : ""}
-                            </span>
-                            {isMe && <span className="text-xs text-emerald-200">我</span>}
-                          </div>
-                          <div className="mt-1 text-xs md3-subtle">{prediction ? "已提交" : "未提交"}</div>
-                        </button>
-                        {prediction ? <div className="text-sm font-black">{prediction.home}:{prediction.away}</div> : <div className="text-sm md3-subtle">--</div>}
-                      </div>
-                      {prediction && match.status === "settled" && <div className="mt-2 text-xs md3-subtle">{explainPoints(prediction, match)} · +{points}</div>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <>
+            <PredictionOutcomeBoard groups={visibleGroups} />
+            {isAdmin ? <PredictionExportCard ref={exportRef} match={match} groups={visibleGroups} /> : null}
+          </>
         ) : (
-          <EmptyState icon={Eye} title="预测将在开赛后公开" description="朋友预测会在开赛后按主胜、平局、客胜和未提交自动分组展示。" />
+          <EmptyState icon={Eye} title="预测将在开赛后公开" description="朋友预测会在开赛后按主胜、平局、客胜自动分组展示，未提交只显示人数。" />
         )}
       </div>
     </div>
   );
 }
+
+function PredictionOutcomeBoard({ groups }) {
+  return (
+    <div className="grid gap-3 xl:grid-cols-3">
+      {groups.map((group) => (
+        <div key={group.key} className="md3-outline-card md3-card p-3 sm:p-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="font-black">{group.title}</div>
+            <Pill>{group.items.length} 人</Pill>
+          </div>
+          <div className="divide-y divide-white/10">
+            {group.items.map((entry) => (
+              <PredictionEntryRow key={entry.player.id} entry={entry} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PredictionEntryRow({ entry, exportMode = false }) {
+  const { player, prediction, isMe } = entry;
+  return (
+    <div className={cn("flex items-center justify-between gap-3 py-2", exportMode ? "text-emerald-50" : "text-slate-100")}>
+      <div className="min-w-0 flex items-center gap-2">
+        <span className="truncate text-sm font-semibold">{getPlayerDisplayId(player)}</span>
+        {isMe ? <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-bold", exportMode ? "bg-white/10 text-emerald-100" : "bg-emerald-500/15 text-emerald-200")}>我</span> : null}
+      </div>
+      <div className={cn("shrink-0 text-sm font-black tabular-nums", exportMode ? "text-emerald-50" : "text-slate-100")}>{prediction.home}:{prediction.away}</div>
+    </div>
+  );
+}
+
+const PredictionExportCard = React.forwardRef(function PredictionExportCard({ match, groups }, ref) {
+  return (
+    <div className="pointer-events-none fixed left-[-99999px] top-0 opacity-0">
+      <div
+        ref={ref}
+        className="w-[1200px] rounded-[32px] px-8 py-8 text-emerald-50"
+        style={{
+          background: "linear-gradient(180deg, #153c2a 0%, #102c1f 100%)",
+          boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
+        }}
+      >
+        <div className="rounded-[24px] border border-white/10 bg-white/5 px-6 py-5">
+          <div className="text-xs uppercase tracking-[0.22em] text-emerald-100/70">世界杯竞猜 · 单场预测导出</div>
+          <div className="mt-3 flex items-center gap-3 text-3xl font-black">
+            <span>{teamName(match.home)}</span>
+            <span className="text-emerald-100/70">vs</span>
+            <span>{teamName(match.away)}</span>
+          </div>
+          <div className="mt-2 text-sm text-emerald-50/75">{formatDateTime(match.kickoff)}</div>
+        </div>
+        <div className="mt-6 grid grid-cols-3 gap-4">
+          {groups.map((group) => (
+            <div key={`export-${group.key}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-lg font-black">{group.title}</div>
+                <div className="rounded-full bg-white/10 px-3 py-1 text-sm font-semibold">{group.items.length} 人</div>
+              </div>
+              <div className="divide-y divide-white/10">
+                {group.items.map((entry) => (
+                  <PredictionEntryRow key={`export-entry-${group.key}-${entry.player.id}`} entry={entry} exportMode />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
 
 function ScoreInput({ label, value, disabled, onChange }) {
   return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
