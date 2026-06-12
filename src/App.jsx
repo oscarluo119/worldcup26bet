@@ -1897,7 +1897,7 @@ export default function WorldCupPredictionMVP() {
   const [worldCupNews, setWorldCupNews] = useState(() => readCachedWorldCupNews());
   const [newsLoading, setNewsLoading] = useState(() => readCachedWorldCupNews().length === 0);
   const [selectedNewsItem, setSelectedNewsItem] = useState(null);
-  const [selectedMatchId, setSelectedMatchId] = useState(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE[0]?.id || "");
+  const [selectedMatchId, setSelectedMatchId] = useState("");
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("ALL");
@@ -2269,7 +2269,8 @@ export default function WorldCupPredictionMVP() {
   React.useEffect(() => {
     setSelectedMatchId((prev) => {
       if (!scheduleVisibleMatches.length) return "";
-      return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : scheduleVisibleMatches[0].id;
+      if (!prev) return prev;
+      return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : "";
     });
   }, [scheduleVisibleMatches]);
 

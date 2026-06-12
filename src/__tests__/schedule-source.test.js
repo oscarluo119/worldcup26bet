@@ -12,6 +12,13 @@ describe("schedule source bootstrap", () => {
     expect(appSource).not.toContain('setScheduleSource("worldcupapi")');
   });
 
+  test("keeps the schedule page collapsed by default without auto-falling back to the first match", () => {
+    expect(appSource).toContain('const [selectedMatchId, setSelectedMatchId] = useState("")');
+    expect(appSource).toContain('if (!prev) return prev;');
+    expect(appSource).toContain('return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : "";');
+    expect(appSource).not.toContain('return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : scheduleVisibleMatches[0].id;');
+  });
+
   test("shows the local schedule source label in the full schedule page", () => {
     expect(appSource).toContain("本地权威赛程");
     expect(appSource).not.toContain("WorldCupAPI 实时赛程");
