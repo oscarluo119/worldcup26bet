@@ -32,4 +32,18 @@ describe("normalizeUserFacingError", () => {
       category: "unknown",
     });
   });
+
+  test("translates delete self protection errors", () => {
+    expect(normalizeUserFacingError({ message: "cannot_delete_self", code: "cannot_delete_self" }, "user_delete")).toMatchObject({
+      code: "cannot_delete_self",
+      category: "permission",
+    });
+  });
+
+  test("translates last admin protection errors", () => {
+    expect(normalizeUserFacingError({ message: "last_admin_protected", code: "last_admin_protected" }, "user_delete")).toMatchObject({
+      code: "last_admin_protected",
+      category: "permission",
+    });
+  });
 });

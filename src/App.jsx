@@ -59,6 +59,7 @@ import {
 import brandTrophyImage from "./assets/brand-trophy.png";
 import { TeamProfileTrigger, TeamRadarComparison } from "./components/teamProfileCard";
 import { getAdminCandidates, getCurrentAdmins } from "./lib/adminAccounts";
+import { getDeletableUsers } from "./lib/adminDeleteUsers";
 import { normalizeAuthError } from "./lib/auth";
 import { getFlagRenderData } from "./lib/flags";
 import { buildMatchInsights } from "./lib/matchInsights";
@@ -2528,6 +2529,39 @@ export default function WorldCupPredictionMVP() {
     return true;
   }
 
+  async function deleteUser(userId) {
+    if (!isAdmin || !userId) return false;
+
+    const { data, error } = await supabase.functions.invoke("admin-delete-user", {
+      body: {
+        targetUserId: userId,
+      },
+    });
+
+    if (error) {
+      let nextError = error;
+      try {
+        const detail = await error.context?.json?.();
+        if (detail?.code || detail?.message) {
+          nextError = {
+            ...error,
+            code: detail.code || error.code,
+            message: detail.message || error.message,
+          };
+        }
+      } catch {
+        // Keep the original function error when no JSON payload is available.
+      }
+
+      showUserError(nextError, "user_delete");
+      return false;
+    }
+
+    await refreshSupabaseData();
+    openSnackbar(data?.deletedUserId ? "用户已删除" : "删除已完成");
+    return true;
+  }
+
   function openPlayerProfile(playerId) {
     setSelectedProfilePlayerId(playerId);
     setActiveTab("playerProfile");
@@ -2570,7 +2604,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} openDialog={openDialog} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} currentPlayerId={currentPlayerId} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} onDeleteUser={deleteUser} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -4535,6 +4569,55 @@ function AdminAccountManagementCard({ players, onSetUserAdmin }) {
   );
 }
 
+function AdminDeleteUserCard({ players, currentPlayerId, onDeleteUser }) {
+  const [query, setQuery] = useState("");
+  const [deletingUserId, setDeletingUserId] = useState("");
+  const deletableUsers = getDeletableUsers(players, query, currentPlayerId).slice(0, 12);
+
+  async function handleDelete(player) {
+    const label = player.name || player.email || "该用户";
+    const confirmed = window.confirm(`确认删除 ${label} 吗？账号及关联数据将被永久删除。`);
+    if (!confirmed) return;
+    setDeletingUserId(player.id);
+    await onDeleteUser?.(player.id);
+    setDeletingUserId("");
+  }
+
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-black">删除用户</h2>
+          <p className="mt-1 text-sm text-slate-400">仅管理员可永久删除账号。删除后，账号及关联数据将被永久删除，无法恢复。</p>
+        </div>
+        <Pill className="bg-rose-500/15 text-rose-200">高风险操作</Pill>
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索邮箱或昵称" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-slate-500" />
+      </div>
+      <div className="mt-3 space-y-3">
+        {deletableUsers.length ? deletableUsers.map((player) => (
+          <div key={player.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-700 px-3 py-3">
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-white">{player.name || "未命名用户"}</div>
+              <div className="truncate text-xs text-slate-400">{player.email || "未填写邮箱"}</div>
+            </div>
+            <button
+              type="button"
+              className="rounded-full border border-rose-400/30 px-3 py-1 text-xs font-semibold text-rose-200 disabled:opacity-50"
+              disabled={deletingUserId === player.id}
+              onClick={() => handleDelete(player)}
+            >
+              删除用户
+            </button>
+          </div>
+        )) : <div className="rounded-2xl bg-slate-900 px-4 py-5 text-center text-sm text-slate-500">没有匹配的可删除用户。</div>}
+      </div>
+    </Card>
+  );
+}
+
 function SponsorPredictionResultsCard({ matches, sponsorPredictionResults, onSetSponsorPredictionResult }) {
   const event = SPONSOR_PREDICTION_EVENTS[0];
   const resolvedMatch = useMemo(() => getFirstGoalResolvedMatch(matches), [matches]);
@@ -4589,7 +4672,7 @@ function SponsorPredictionResultsCard({ matches, sponsorPredictionResults, onSet
   );
 }
 
-function AdminPanel({ matches, players, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, sponsorPredictionResults, onSetSponsorPredictionResult, onSetUserCamp, onSetUserAdmin, openDialog }) {
+function AdminPanel({ matches, players, currentPlayerId, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, sponsorPredictionResults, onSetSponsorPredictionResult, onSetUserCamp, onSetUserAdmin, onDeleteUser, openDialog }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
   const normalizedQuery = adminQuery.trim().toLowerCase();
@@ -4607,6 +4690,7 @@ function AdminPanel({ matches, players, predictions, updateMatchResult, clearMat
       <SponsorPredictionResultsCard matches={matches} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={onSetSponsorPredictionResult} />
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
       <AdminAccountManagementCard players={players} onSetUserAdmin={onSetUserAdmin} />
+      <AdminDeleteUserCard players={players} currentPlayerId={currentPlayerId} onDeleteUser={onDeleteUser} />
       <Card>
         <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>

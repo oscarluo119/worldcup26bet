@@ -23,6 +23,7 @@ function getContextFallback(context) {
     profile_save: "个人资料更新失败，请稍后重试。",
     user_camp_save: "阵营分配更新失败，请稍后重试。",
     user_admin_save: "管理员权限更新失败，请稍后重试。",
+    user_delete: "删除用户失败，请稍后重试。",
     general: "操作失败，请稍后重试。",
   };
 
@@ -135,16 +136,50 @@ export function normalizeUserFacingError(error, context = "general") {
   }
 
   if (
+    code === "cannot_delete_self"
+    || message.includes("cannot_delete_self")
+  ) {
+    return buildResult("不能删除你当前登录的管理员账号。", {
+      rawMessage,
+      code: "cannot_delete_self",
+      category: "permission",
+    });
+  }
+
+  if (
+    code === "last_admin_protected"
+    || message.includes("last_admin_protected")
+  ) {
+    return buildResult("系统至少要保留一位管理员，暂时不能删除该账号。", {
+      rawMessage,
+      code: "last_admin_protected",
+      category: "permission",
+    });
+  }
+
+  if (
+    code === "user_not_found"
+    || message.includes("user_not_found")
+  ) {
+    return buildResult("没有找到要删除的用户，请刷新后重试。", {
+      rawMessage,
+      code: "user_not_found",
+      category: "data",
+    });
+  }
+
+  if (
     message.includes("admin access required")
     || message.includes("permission denied")
     || message.includes("row-level security")
     || message.includes("not authorized")
     || message.includes("forbidden")
+    || code === "admin_required"
     || code === "42501"
   ) {
     return buildResult("你当前没有执行这项操作的权限。", {
       rawMessage,
-      code: "permission_denied",
+      code: code === "admin_required" ? "admin_required" : "permission_denied",
       category: "permission",
     });
   }
