@@ -84,7 +84,7 @@ describe("match prediction groups", () => {
     expect(appSource).toContain("function PredictionEntryRow({ entry, exportMode = false })");
     expect(appSource).not.toContain("function PredictionEntryCard(");
     expect(appSource).not.toContain("prediction ? ` ${prediction.home}:${prediction.away}` : \"\"");
-    expect(appSource).not.toContain("<div className={cn(\"mt-1 text-xs\", exportMode ? \"text-emerald-50/70\" : \"md3-subtle\")}>已提交</div>");
+    expect(appSource).not.toContain('<div className={cn("mt-1 text-xs", exportMode ? "text-emerald-50/70" : "md3-subtle")}>已提交</div>');
   });
 
   test("upgrades the match info card with world cup match wording and team component rendering", () => {
@@ -93,8 +93,9 @@ describe("match prediction groups", () => {
     expect(appSource).toContain("<TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} />");
   });
 
-  test("shows result, prediction, and average score in the schedule card summary area", () => {
+  test("shows result, my points, prediction, and average score in the schedule card summary area", () => {
     expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">比赛结果</div>');
+    expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的得分</div>');
     expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的预测</div>');
     expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">平均得分</div>');
   });

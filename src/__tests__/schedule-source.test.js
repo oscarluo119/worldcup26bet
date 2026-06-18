@@ -19,6 +19,11 @@ describe("schedule source bootstrap", () => {
     expect(appSource).not.toContain('return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : scheduleVisibleMatches[0].id;');
   });
 
+  test("keeps only the most recent past match day on the schedule page", () => {
+    expect(appSource).toContain("const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 1), [filteredMatches, currentTime]);");
+    expect(appSource).not.toContain("const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 2), [filteredMatches, currentTime]);");
+  });
+
   test("shows the local schedule source label in the full schedule page", () => {
     expect(appSource).toContain("本地权威赛程");
     expect(appSource).not.toContain("WorldCupAPI 实时赛程");

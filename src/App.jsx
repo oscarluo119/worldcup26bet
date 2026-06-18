@@ -2278,7 +2278,7 @@ export default function WorldCupPredictionMVP() {
     const text = `${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${STAGES[match.stage]?.label || ""}`.toLowerCase();
     return text.includes(query.toLowerCase()) && (stageFilter === "ALL" || match.stage === stageFilter);
   }), [matches, query, stageFilter]);
-  const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 2), [filteredMatches, currentTime]);
+  const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 1), [filteredMatches, currentTime]);
   const groupedMatches = groupByDate(scheduleVisibleMatches);
   const unPredictedCount = matches.filter((match) => !predictions.some((p) => p.playerId === currentPlayerId && p.matchId === match.id)).length;
   const settledCount = matches.filter(isSettledMatch).length;
@@ -2936,21 +2936,23 @@ function MatchListButton({ match, pred, active, onClick, now = new Date(), match
           <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} interactiveProfile teamCardMatches={matches} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} /></div>
           <div className="mt-1 text-[11px] sm:text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
-        <div className="rounded-[18px] px-3 py-2.5 text-left md:min-w-[188px] md:self-start md:text-right" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
-          <div className="grid gap-y-2 text-left md:text-right">
+        <div className="rounded-[18px] px-3 py-2.5 text-left md:min-w-[216px] md:self-start md:text-right" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-left md:text-right">
             <div>
               <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">比赛结果</div>
               <div className="mt-1 text-base font-black sm:text-xl">{summary.resultLabel}</div>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 text-left md:text-right">
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的预测</div>
-                <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.myPredictionLabel}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">平均得分</div>
-                <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.averagePointsLabel}</div>
-              </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的得分</div>
+              <div className="mt-1 text-base font-black sm:text-xl">{summary.myPointsLabel}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的预测</div>
+              <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.myPredictionLabel}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">平均得分</div>
+              <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.averagePointsLabel}</div>
             </div>
           </div>
         </div>
