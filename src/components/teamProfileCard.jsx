@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getFlagRenderData } from "../lib/flags";
+import { buildTeamTournamentRecord } from "../lib/teamTournamentRecord";
 import { TEAM_PROFILE_DIMENSIONS, getTeamProfileByCountryCode, getTeamProfileByName } from "../lib/teamProfiles";
 
 function joinClasses(...classes) {
@@ -201,7 +202,62 @@ function InfoBlock({ label, primary, secondary }) {
   );
 }
 
-export function TeamProfileCard({ profile, className = "" }) {
+function TeamTournamentRecordSection({ profile, matches = [] }) {
+  const record = useMemo(() => buildTeamTournamentRecord(profile, matches), [matches, profile]);
+
+  return (
+    <div
+      className="mt-3 rounded-[22px] border px-3 py-3"
+      style={{
+        borderColor: "rgba(110, 231, 183, 0.16)",
+        background: "linear-gradient(180deg, rgba(7, 18, 32, 0.88), rgba(12, 24, 40, 0.68))",
+      }}
+    >
+      <div className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] md3-subtle">本届战绩</div>
+      {record.played ? (
+        <>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <span className="rounded-full border px-2.5 py-1 text-xs font-black text-emerald-100" style={{ borderColor: "rgba(110, 231, 183, 0.16)", background: "rgba(16, 185, 129, 0.14)" }}>{record.summary}</span>
+            <span className="rounded-full border px-2.5 py-1 text-xs font-black text-slate-100" style={{ borderColor: "rgba(148, 163, 184, 0.16)", background: "rgba(30, 41, 59, 0.55)" }}>{record.goalsSummary}</span>
+          </div>
+          <div className="space-y-2">
+            {record.matchResults.map((match) => (
+              <div
+                key={match.id}
+                className="rounded-[16px] border px-3 py-2.5"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 48%, transparent)",
+                  background: "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 52%, transparent)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-3 text-[11px]">
+                  <span className="font-black md3-subtle">{match.stageLabel}</span>
+                  <span className="font-black text-slate-200">{match.result}</span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between gap-3">
+                  <span className="min-w-0 text-sm font-bold text-slate-100">{match.opponent}</span>
+                  <span className="shrink-0 text-sm font-black text-emerald-200">{match.scoreline}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div
+          className="rounded-[16px] border px-3 py-3 text-sm text-slate-300"
+          style={{
+            borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 48%, transparent)",
+            background: "color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 52%, transparent)",
+          }}
+        >
+          本届暂无已结束比赛
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function TeamProfileCard({ profile, matches = [], className = "" }) {
   if (!profile) return null;
 
   const flag = getFlagRenderData({
@@ -271,11 +327,12 @@ export function TeamProfileCard({ profile, className = "" }) {
         <InfoBlock label="总身价" primary={profile.totalSquadValue} />
         <InfoBlock label="上届世界杯" primary={profile.lastWorldCupResult} />
       </div>
+      <TeamTournamentRecordSection profile={profile} matches={matches} />
     </div>
   );
 }
 
-export function TeamProfileTrigger({ name, countryCode = "", children }) {
+export function TeamProfileTrigger({ name, countryCode = "", matches = [], children }) {
   const profile = getTeamProfileByCountryCode(countryCode) || getTeamProfileByName(name);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0 });
@@ -295,7 +352,7 @@ export function TeamProfileTrigger({ name, countryCode = "", children }) {
       const preferredLeft = rect.left;
       const maxLeft = Math.max(8, window.innerWidth - estimatedWidth - 8);
       const nextLeft = Math.min(preferredLeft, maxLeft);
-      const cardHeight = 430;
+      const cardHeight = 620;
       const spaceBelow = window.innerHeight - rect.bottom;
       const showAbove = spaceBelow < cardHeight && rect.top > cardHeight;
       setPosition({
@@ -372,7 +429,7 @@ export function TeamProfileTrigger({ name, countryCode = "", children }) {
             onMouseEnter={clearCloseTimer}
             onMouseLeave={scheduleClose}
           >
-            <TeamProfileCard profile={profile} />
+            <TeamProfileCard profile={profile} matches={matches} />
           </div>,
           document.body,
         )

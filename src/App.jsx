@@ -65,6 +65,8 @@ import { getFlagRenderData } from "./lib/flags";
 import { buildMatchInsights } from "./lib/matchInsights";
 import { fetchMatchOdds } from "./lib/matchOdds";
 import { buildMatchPredictionGroups, buildPredictionExportFileName } from "./lib/matchPredictionGroups";
+import { buildScheduleMatchSummary } from "./lib/scheduleMatchSummary";
+import { buildWorldCupTeamCardMatches } from "./lib/worldCupTeamCardMatches";
 import {
   ASIA_ROUND2_GOALS_EVENT_ID,
   ASIA_ROUND2_GROUP_ID,
@@ -788,7 +790,7 @@ function TeamLogo({ logo, name, size = "h-4 w-6" }) {
   return <span className={`inline-flex ${size} items-center justify-center text-xs text-slate-400`}>?</span>;
 }
 
-function TeamName({ name, logo, className = "", interactiveProfile = false }) {
+function TeamName({ name, logo, className = "", interactiveProfile = false, teamCardMatches = [] }) {
   const displayName = translateDisplayText(name);
   const content = (
     <span className={`inline-flex min-w-0 items-center gap-2 ${className}`}>
@@ -797,7 +799,7 @@ function TeamName({ name, logo, className = "", interactiveProfile = false }) {
     </span>
   );
   if (!interactiveProfile) return content;
-  return <TeamProfileTrigger name={displayName}>{content}</TeamProfileTrigger>;
+  return <TeamProfileTrigger name={displayName} matches={teamCardMatches}>{content}</TeamProfileTrigger>;
 }
 
 function getOutcome(home, away) {
@@ -2282,6 +2284,7 @@ export default function WorldCupPredictionMVP() {
   const settledCount = matches.filter(isSettledMatch).length;
   const worldCupStandings = useMemo(() => buildWorldCupStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
+  const worldCupTeamCardMatches = useMemo(() => buildWorldCupTeamCardMatches(completeSchedule, worldCupResults, matches), [completeSchedule, worldCupResults, matches]);
   const campBattleSummary = useMemo(() => buildCampBattleSummary(rankings, matches, predictions), [rankings, matches, predictions]);
   const nextOpenMatch = useMemo(
     () => [...matches].filter((match) => !isMatchLocked(match, currentTime)).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())[0],
@@ -2616,9 +2619,9 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "home" ? <HeroBanner /> : null}
           {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} />}
           {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
-          {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} />}
-          {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} />}
-          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} />}
+          {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} matches={matches} />}
+          {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} matches={worldCupTeamCardMatches} />}
+          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} matches={matches} />}
           {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={resolvedSponsorPredictionResults} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "sponsorPredictions" && <SponsorPredictionPanel currentPlayer={currentPlayer} players={players} matches={matches} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={resolvedSponsorPredictionResults} onSave={saveSponsorPrediction} firstKickoff={firstKickoff} />}
@@ -2911,8 +2914,13 @@ function MatchFeatureCard({ match, pred, now, onClick }) {
   );
 }
 
-function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
+function MatchListButton({ match, pred, active, onClick, now = new Date(), matches = [], predictions = [] }) {
   const stage = STAGES[match.stage] || STAGES.GROUP;
+  const summary = buildScheduleMatchSummary({
+    match,
+    currentPrediction: pred,
+    predictions,
+  });
   return (
     <button onClick={onClick} className={`relative z-20 md3-card w-full !p-3 text-left sm:!p-4 ${active ? "md3-filled-card" : "md3-outline-card"}`}>
       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center md:justify-between">
@@ -2925,10 +2933,27 @@ function MatchListButton({ match, pred, active, onClick, now = new Date() }) {
             {pred ? <Pill className="bg-emerald-500/15 text-emerald-200">已竞猜</Pill> : <Pill className="bg-rose-500/15 text-rose-200">未竞猜</Pill>}
             <Pill style={active ? { background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" } : undefined}>{active ? "收起详情" : "展开竞猜"}</Pill>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} interactiveProfile /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} interactiveProfile /></div>
+          <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-black leading-5 sm:text-lg"><TeamName name={match.home} logo={match.homeLogo} interactiveProfile teamCardMatches={matches} /><span className="md3-subtle">vs</span><TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} /></div>
           <div className="mt-1 text-[11px] sm:text-xs md3-subtle">{formatDateTime(match.kickoff)} · {match.group}</div>
         </div>
-        <div className="text-left md:text-right"><MatchScore match={match} />{pred && <div className="mt-1.5 text-[11px] sm:text-xs md3-subtle">我的预测：{pred.home}:{pred.away}</div>}</div>
+        <div className="rounded-[18px] px-3 py-2.5 text-left md:min-w-[188px] md:self-start md:text-right" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+          <div className="grid gap-y-2 text-left md:text-right">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">比赛结果</div>
+              <div className="mt-1 text-base font-black sm:text-xl">{summary.resultLabel}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 text-left md:text-right">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的预测</div>
+                <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.myPredictionLabel}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">平均得分</div>
+                <div className="mt-1 text-[11px] font-bold sm:text-xs">{summary.averagePointsLabel}</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </button>
   );
@@ -2938,7 +2963,7 @@ function getPlayerDisplayId(player) {
   return (player?.name || player?.email || "未命名用户").trim() || "未命名用户";
 }
 
-function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin }) {
+function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin, matches = [] }) {
   function handleMatchToggle(matchId) {
     setSelectedMatchId((prev) => (prev === matchId ? "" : matchId));
   }
@@ -2956,7 +2981,7 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
             const active = selectedMatchId === match.id;
             return (
               <div key={match.id} className={`overflow-visible rounded-[28px] transition ${active ? "md3-card md3-filled-card" : ""}`}>
-                <MatchListButton match={match} pred={pred} active={active} now={currentTime} onClick={() => handleMatchToggle(match.id)} />
+                <MatchListButton match={match} pred={pred} active={active} now={currentTime} matches={matches} predictions={predictions} onClick={() => handleMatchToggle(match.id)} />
                 {active && (
                   <div className="relative z-10 border-t px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-4 md3-divider">
                     <MatchPredictionDetail match={match} players={players} predictions={predictions} currentPlayerId={currentPlayerId} onSubmit={upsertPrediction} now={currentTime} onOpenPlayerProfile={onOpenPlayerProfile} isAdmin={isAdmin} />
@@ -2971,7 +2996,7 @@ function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFil
   );
 }
 
-function WorldCupStandingsPanel({ standings, settledCount }) {
+function WorldCupStandingsPanel({ standings, settledCount, matches = [] }) {
   const groupKeys = Object.keys(standings).sort((a, b) => a.localeCompare(b, "zh-CN"));
   const bestThirdTeams = groupKeys
     .map((group) => ({ ...sortStandingsTable(standings[group])[2], group }))
@@ -3010,7 +3035,7 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
           {bestThirdTeams.slice(0, 8).map((team, index) => (
             <div key={`${team.group}-${team.team}`} className="md3-card md3-card-tone-warning p-3">
               <div className="mb-1 text-xs font-black text-amber-200">小组第三竞争 #{index + 1}</div>
-              <div className="font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></div>
+              <div className="font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile teamCardMatches={matches} /></div>
               <div className="mt-1 text-xs text-slate-400">{team.group} · {team.points}分 · 净胜球 {team.goalDifference} · 进球 {team.goalsFor}</div>
             </div>
           ))}
@@ -3018,13 +3043,13 @@ function WorldCupStandingsPanel({ standings, settledCount }) {
       </Card>
 
       <div className="grid gap-5">
-        {groupKeys.map((group) => <GroupStandingsCard key={group} group={group} table={sortStandingsTable(standings[group])} />)}
+        {groupKeys.map((group) => <GroupStandingsCard key={group} group={group} table={sortStandingsTable(standings[group])} matches={matches} />)}
       </div>
     </section>
   );
 }
 
-function GroupStandingsCard({ group, table }) {
+function GroupStandingsCard({ group, table, matches = [] }) {
   return (
     <Card className="!p-3.5 sm:!p-5">
       <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
@@ -3041,7 +3066,7 @@ function GroupStandingsCard({ group, table }) {
               <div className="flex items-center gap-3">
                 <span className="rounded-full px-2 py-1 text-xs font-black" style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 90%, transparent)" }}>#{index + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" interactiveProfile /></div>
+                  <div className="font-black"><TeamName name={team.team} logo={team.logo} className="max-w-full" interactiveProfile teamCardMatches={matches} /></div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] md3-subtle">
                     <Pill className={status.className}>{status.label}</Pill>
                     <span>{team.played}赛</span>
@@ -3082,7 +3107,7 @@ function GroupStandingsCard({ group, table }) {
               return (
                 <tr key={team.team} className="md3-table-row">
                   <td className="px-3 py-3 font-black">#{index + 1}</td>
-                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile /></td>
+                  <td className="px-3 py-3 font-black"><TeamName name={team.team} logo={team.logo} interactiveProfile teamCardMatches={matches} /></td>
                   <td className="px-3 py-3 text-center text-lg font-black text-emerald-200">{team.points}</td>
                   <td className="px-3 py-3 text-center">{team.played}</td>
                   <td className="px-3 py-3 text-center">{team.won}</td>
@@ -3102,7 +3127,7 @@ function GroupStandingsCard({ group, table }) {
   );
 }
 
-function FullScheduleCalendar({ schedule, source }) {
+function FullScheduleCalendar({ schedule, source, matches = [] }) {
   const [scheduleQuery, setScheduleQuery] = useState("");
   const [scheduleStage, setScheduleStage] = useState("ALL");
   const filteredSchedule = useMemo(() => schedule.filter((match) => {
@@ -3138,14 +3163,14 @@ function FullScheduleCalendar({ schedule, source }) {
       <Card className={CARD_TONE.tonal}>
         <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-xl font-black">按日期列表</h3></div><Pill>{filteredSchedule.length} 场</Pill></div>
         <div className="space-y-4">
-          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="md3-panel p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black md3-subtle"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.id} match={match} />)}</div></div>)}
+          {Object.entries(scheduleByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateKey, items]) => <div key={dateKey} className="md3-panel p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black md3-subtle"><CalendarDays className="h-4 w-4" /> {formatBeijingDateTitle(items[0].kickoff)}</div><div className="grid gap-3 md:grid-cols-2">{items.map((match) => <ScheduleLargeCard key={match.id} match={match} matches={matches} />)}</div></div>)}
         </div>
       </Card>
     </section>
   );
 }
 
-function ScheduleLargeCard({ match }) {
+function ScheduleLargeCard({ match, matches = [] }) {
   const now = useCurrentTime();
   return (
     <div className="md3-panel-inset p-3">
@@ -3157,9 +3182,9 @@ function ScheduleLargeCard({ match }) {
         <MatchCountdown match={match} now={now} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-lg font-black">
-        <TeamName name={match.home} logo={match.homeLogo} interactiveProfile />
+        <TeamName name={match.home} logo={match.homeLogo} interactiveProfile teamCardMatches={matches} />
         <MatchScore match={match} />
-        <TeamName name={match.away} logo={match.awayLogo} interactiveProfile />
+        <TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} />
       </div>
       <RegulationSettlementNotice match={match} className="mt-3" />
       <div className="mt-2 text-sm text-slate-400">{match.stadium || match.location}</div>
@@ -3816,15 +3841,22 @@ function InfoRow({ label, value }) {
 
 function PredictionHistoryList({ items }) {
   return <div className="space-y-3">
-    {items.length ? items.map(({ prediction, match, points }) => (
+    {items.length ? items.map(({ prediction, match, points, summary }) => (
       <div key={prediction.id} className="md3-panel p-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Pill>#{match.no}</Pill>
           <Pill className="bg-emerald-500/15 text-emerald-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
-          {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
         </div>
         <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
         <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <div className="w-full sm:w-[15rem]">
+            <InfoRow label="我的得分" value={summary.myPointsLabel} />
+          </div>
+          <div className="w-full sm:w-[15rem]">
+            <InfoRow label="平均得分" value={summary.averagePointsLabel} />
+          </div>
+        </div>
         <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
       </div>
     )) : <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
@@ -3903,7 +3935,16 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
     .slice(0, 5);
   const history = playerPredictions.map((prediction) => {
     const match = matches.find((item) => item.id === prediction.matchId);
-    return { prediction, match, points: calculatePoints(prediction, match) };
+    return {
+      prediction,
+      match,
+      points: calculatePoints(prediction, match),
+      summary: buildScheduleMatchSummary({
+        match,
+        currentPrediction: prediction,
+        predictions,
+      }),
+    };
   }).filter((item) => item.match && isSettledMatch(item.match)).sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());
   const recentHistory = history.slice(0, 5);
   const cleanDraftUsername = draftUsername.trim();
@@ -4033,20 +4074,7 @@ function PlayerProfilePanel({ player, currentPlayerId, players, rankings, predic
           </div>
           <Pill>{history.length} 条</Pill>
         </div>
-        <div className="space-y-3">
-          {recentHistory.length ? recentHistory.map(({ prediction, match, points }) => (
-            <div key={prediction.id} className="md3-panel p-4">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Pill>#{match.no}</Pill>
-                <Pill className="bg-emerald-500/15 text-emerald-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>
-                {match.status === "settled" && <Pill className="bg-emerald-500/15 text-emerald-200">+{points}分</Pill>}
-              </div>
-              <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
-              <div className="mt-1 text-sm text-slate-400">预测：{prediction.home}:{prediction.away} {match.status === "settled" ? `｜赛果：${match.homeScore}:${match.awayScore}｜${explainPoints(prediction, match)}` : "｜待结算"}</div>
-              <div className="mt-1 text-xs text-slate-500">提交时间：{formatDateTime(prediction.submittedAt)}｜开球：{formatDateTime(match.kickoff)}</div>
-            </div>
-          )) : <div className="md3-panel-inset p-5 text-center text-sm text-slate-500">暂无竞猜记录</div>}
-        </div>
+        <PredictionHistoryList items={recentHistory} />
       </Card>
     </section>
   );
@@ -5158,7 +5186,16 @@ function AllHistoryPanel({ player, predictions, matches, onBack }) {
     .filter((prediction) => prediction.playerId === player.id)
     .map((prediction) => {
       const match = matches.find((item) => item.id === prediction.matchId);
-      return { prediction, match, points: calculatePoints(prediction, match) };
+      return {
+        prediction,
+        match,
+        points: calculatePoints(prediction, match),
+        summary: buildScheduleMatchSummary({
+          match,
+          currentPrediction: prediction,
+          predictions,
+        }),
+      };
     })
     .filter((item) => item.match && isSettledMatch(item.match))
     .sort((a, b) => new Date(b.match.kickoff).getTime() - new Date(a.match.kickoff).getTime());

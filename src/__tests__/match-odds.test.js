@@ -79,6 +79,66 @@ describe("match odds helpers", () => {
   });
 
   test("falls back to direct real-odds fetching when function config is missing", async () => {
+    const fetchCalls = [];
+    const fetchImpl = async (url) => {
+      fetchCalls.push(String(url));
+      if (String(url).includes("/events?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            events: [
+              {
+                id: 101,
+                participants: [
+                  { name: "Canada" },
+                  { name: "Bosnia and Herzegovina" },
+                ],
+              },
+            ],
+          }),
+        };
+      }
+
+      if (String(url).includes("/books")) {
+        return {
+          ok: true,
+          json: async () => ({
+            books: [
+              { id: 1, name: "DraftKings" },
+            ],
+          }),
+        };
+      }
+
+      if (String(url).includes("/offers?") && !String(url).includes("location=ON")) {
+        return {
+          ok: true,
+          json: async () => ({
+            offers: [
+              {
+                selections: [
+                  { label: "Canada", selection: "home", participant: "home", books: [{ id: 1, lines: [{ cost: 150 }] }] },
+                  { label: "Draw", selection: "draw", participant: null, books: [{ id: 1, lines: [{ cost: 220 }] }] },
+                  { label: "Bosnia and Herzegovina", selection: "away", participant: "away", books: [{ id: 1, lines: [{ cost: 300 }] }] },
+                ],
+              },
+            ],
+          }),
+        };
+      }
+
+      if (String(url).includes("location=ON")) {
+        return {
+          ok: true,
+          json: async () => ({
+            offers: [],
+          }),
+        };
+      }
+
+      throw new Error(`unexpected_url:${url}`);
+    };
+
     const payload = await fetchMatchOdds({
       supabase: null,
       isSupabaseConfigured: false,
@@ -91,8 +151,35 @@ describe("match odds helpers", () => {
         away: "\u6ce2\u9ed1",
         kickoff: "2026-06-13T03:00:00+08:00",
       },
+      fetchImpl,
     });
 
     expect(payload.bookmakers.some((bookmaker) => bookmaker.status === "ready")).toBe(true);
+    expect(fetchCalls.some((url) => url.includes("/events?"))).toBe(true);
+    expect(fetchCalls.some((url) => url.includes("/books"))).toBe(true);
+  });
+
+  test("returns an empty scaffold when direct fallback requests time out", async () => {
+    const payload = await Promise.race([
+      fetchMatchOdds({
+        supabase: null,
+        isSupabaseConfigured: false,
+        supabaseUrl: "",
+        supabaseAnonKey: "",
+        requestTimeoutMs: 20,
+        fetchImpl: () => new Promise(() => {}),
+        match: {
+          id: "m3",
+          no: 3,
+          home: "\u52a0\u62ff\u5927",
+          away: "\u6ce2\u9ed1",
+          kickoff: "2026-06-13T03:00:00+08:00",
+        },
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("test_timeout_waiting_for_match_odds")), 200)),
+    ]);
+
+    expect(payload.bookmakers.every((bookmaker) => bookmaker.status === "missing")).toBe(true);
+    expect(payload.probabilities).toBeNull();
   });
 });

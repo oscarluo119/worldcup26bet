@@ -76,8 +76,8 @@ describe("match prediction groups", () => {
   });
 
   test("threads isAdmin through the schedule panel before match detail uses it", () => {
-    expect(appSource).toContain('<SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} />');
-    expect(appSource).toContain("function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin })");
+    expect(appSource).toContain('<SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} matches={matches} />');
+    expect(appSource).toContain("function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin, matches = [] })");
   });
 
   test("renders prediction groups as compact rows without submitted status or duplicate score text", () => {
@@ -89,9 +89,30 @@ describe("match prediction groups", () => {
 
   test("upgrades the match info card with world cup match wording and team component rendering", () => {
     expect(appSource).toContain("第 {match.no} 场世界杯比赛");
-    expect(appSource).toContain("<TeamName name={match.home} logo={match.homeLogo} interactiveProfile />");
-    expect(appSource).toContain("<TeamName name={match.away} logo={match.awayLogo} interactiveProfile />");
+    expect(appSource).toContain("<TeamName name={match.home} logo={match.homeLogo} interactiveProfile teamCardMatches={matches} />");
+    expect(appSource).toContain("<TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} />");
   });
+
+  test("shows result, prediction, and average score in the schedule card summary area", () => {
+    expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">比赛结果</div>');
+    expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">我的预测</div>');
+    expect(appSource).toContain('<div className="text-[10px] uppercase tracking-[0.16em] md3-subtle">平均得分</div>');
+  });
+
+  test("adds my points and average score labels to full history rows", () => {
+    expect(appSource).toContain('<InfoRow label="我的得分" value={summary.myPointsLabel} />');
+    expect(appSource).toContain('<InfoRow label="平均得分" value={summary.averagePointsLabel} />');
+    expect(appSource).toContain('<div className="mt-3 flex flex-wrap gap-2">');
+    expect(appSource).toContain('<div className="mb-2 flex flex-wrap items-center gap-2">');
+    expect(appSource).toContain('<Pill className="bg-emerald-500/15 text-emerald-200">{(STAGES[match.stage] || STAGES.GROUP).label}</Pill>');
+  });
+
+  test("matches the compact score layout in the player profile history list", () => {
+    expect(appSource).toContain("<PredictionHistoryList items={recentHistory} />");
+    expect(appSource).toContain('<InfoRow label="我的得分" value={summary.myPointsLabel} />');
+    expect(appSource).toContain('<InfoRow label="平均得分" value={summary.averagePointsLabel} />');
+  });
+
   test("adds mainstream odds and match preview sections to the single-match card", () => {
     expect(appSource).toContain("主流赔率");
     expect(appSource).toContain("比赛前瞻");

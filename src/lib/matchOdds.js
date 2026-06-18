@@ -223,14 +223,27 @@ function buildDateCandidates(kickoff) {
   return [...dates].filter(Boolean);
 }
 
-async function fetchBettingProsJson(path, fetchImpl) {
-  const response = await fetchImpl(`${BETTINGPROS_API_BASE_URL}${path}`, {
+async function fetchWithTimeout(url, options, fetchImpl, requestTimeoutMs) {
+  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+    return fetchImpl(url, options);
+  }
+
+  return Promise.race([
+    fetchImpl(url, options),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("match_odds_request_timeout")), requestTimeoutMs);
+    }),
+  ]);
+}
+
+async function fetchBettingProsJson(path, fetchImpl, requestTimeoutMs) {
+  const response = await fetchWithTimeout(`${BETTINGPROS_API_BASE_URL}${path}`, {
     headers: {
       "User-Agent": "Mozilla/5.0",
       "Accept-Language": "en-US,en;q=0.9",
       "x-api-key": BETTINGPROS_PUBLIC_API_KEY,
     },
-  });
+  }, fetchImpl, requestTimeoutMs);
   if (!response.ok) throw new Error(`bettingpros_fetch_failed:${response.status}`);
   return response.json();
 }
@@ -243,9 +256,9 @@ function isSameEvent(event, match) {
     && awayCandidates.some((candidate) => eventNames.includes(candidate));
 }
 
-async function findBettingProsEvent(match, fetchImpl) {
+async function findBettingProsEvent(match, fetchImpl, requestTimeoutMs) {
   for (const dateKey of buildDateCandidates(match.kickoff)) {
-    const payload = await fetchBettingProsJson(`/events?sport=SOCCER&date=${dateKey}&comp_id=${BETTINGPROS_WORLD_CUP_COMPETITION_ID}&season_type=REG:CC:PST:PIT:CT:IST&lineups=true&park_factors=true&officials=false`, fetchImpl);
+    const payload = await fetchBettingProsJson(`/events?sport=SOCCER&date=${dateKey}&comp_id=${BETTINGPROS_WORLD_CUP_COMPETITION_ID}&season_type=REG:CC:PST:PIT:CT:IST&lineups=true&park_factors=true&officials=false`, fetchImpl, requestTimeoutMs);
     const event = (payload.events || []).find((item) => isSameEvent(item, match));
     if (event) return event;
   }
@@ -326,14 +339,14 @@ function buildBookmakersFromBettingPros({ books, offer, match }) {
   });
 }
 
-async function fetchMatchOddsDirectly(match, fetchImpl) {
-  const event = await findBettingProsEvent(match, fetchImpl);
+async function fetchMatchOddsDirectly(match, fetchImpl, requestTimeoutMs) {
+  const event = await findBettingProsEvent(match, fetchImpl, requestTimeoutMs);
   if (!event) return normalizeMatchOddsPayload(null);
 
   const [booksPayload, defaultPayload, ontarioPayload] = await Promise.all([
-    fetchBettingProsJson("/books", fetchImpl),
-    fetchBettingProsJson(`/offers?sport=SOCCER&market_id=${BETTINGPROS_MONEYLINE_MARKET_ID}&event_id=${event.id}&limit=10&page=1`, fetchImpl),
-    fetchBettingProsJson(`/offers?sport=SOCCER&market_id=${BETTINGPROS_MONEYLINE_MARKET_ID}&event_id=${event.id}&limit=10&page=1&location=ON`, fetchImpl),
+    fetchBettingProsJson("/books", fetchImpl, requestTimeoutMs),
+    fetchBettingProsJson(`/offers?sport=SOCCER&market_id=${BETTINGPROS_MONEYLINE_MARKET_ID}&event_id=${event.id}&limit=10&page=1`, fetchImpl, requestTimeoutMs),
+    fetchBettingProsJson(`/offers?sport=SOCCER&market_id=${BETTINGPROS_MONEYLINE_MARKET_ID}&event_id=${event.id}&limit=10&page=1&location=ON`, fetchImpl, requestTimeoutMs),
   ]);
 
   const primaryOffer = defaultPayload.offers?.[0] || null;
@@ -353,12 +366,12 @@ async function fetchMatchOddsDirectly(match, fetchImpl) {
   });
 }
 
-async function fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match }) {
+async function fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match, requestTimeoutMs }) {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("match_odds_function_not_configured");
   }
 
-  const response = await fetchImpl(`${supabaseUrl}/functions/v1/fetch-match-odds`, {
+  const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/fetch-match-odds`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${supabaseAnonKey}`,
@@ -372,7 +385,7 @@ async function fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, ma
       away: match.away,
       kickoff: match.kickoff,
     }),
-  });
+  }, fetchImpl, requestTimeoutMs);
 
   if (!response.ok) throw new Error("match_odds_function_fetch_failed");
   return normalizeMatchOddsPayload(await response.json());
@@ -385,6 +398,7 @@ export async function fetchMatchOdds({
   supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY || "",
   match,
   fetchImpl = fetch,
+  requestTimeoutMs = 4000,
 }) {
   if (!match) return normalizeMatchOddsPayload(null);
 
@@ -403,10 +417,10 @@ export async function fetchMatchOdds({
       return normalizeMatchOddsPayload(data);
     } catch {
       try {
-        return await fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match });
+        return await fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match, requestTimeoutMs });
       } catch {
         try {
-          return await fetchMatchOddsDirectly(match, fetchImpl);
+          return await fetchMatchOddsDirectly(match, fetchImpl, requestTimeoutMs);
         } catch {
           return normalizeMatchOddsPayload(null);
         }
@@ -415,10 +429,10 @@ export async function fetchMatchOdds({
   }
 
   try {
-    return await fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match });
+    return await fetchMatchOddsByUrl({ fetchImpl, supabaseUrl, supabaseAnonKey, match, requestTimeoutMs });
   } catch {
     try {
-      return await fetchMatchOddsDirectly(match, fetchImpl);
+      return await fetchMatchOddsDirectly(match, fetchImpl, requestTimeoutMs);
     } catch {
       return normalizeMatchOddsPayload(null);
     }

@@ -6,8 +6,12 @@ const appSource = readFileSync(resolve(process.cwd(), "src/App.jsx"), "utf8");
 
 describe("team hover profile scope", () => {
   test("enables team profile triggers in schedule and full schedule entries", () => {
-    expect(appSource).toContain('<TeamName name={match.home} logo={match.homeLogo} interactiveProfile />');
-    expect(appSource).toContain('<TeamName name={match.away} logo={match.awayLogo} interactiveProfile />');
+    expect(appSource).toContain("function MatchListButton({ match, pred, active, onClick, now = new Date(), matches = [], predictions = [] })");
+    expect(appSource).toContain("function SchedulePanel({ predictions, currentPlayerId, query, setQuery, stageFilter, setStageFilter, groupedMatches, selectedMatchId, setSelectedMatchId, upsertPrediction, players, currentTime, onOpenPlayerProfile, openSnackbar, isAdmin, matches = [] })");
+    expect(appSource).toContain('activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} matches={matches} />');
+    expect(appSource).toContain('<MatchListButton match={match} pred={pred} active={active} now={currentTime} matches={matches} predictions={predictions} onClick={() => handleMatchToggle(match.id)} />');
+    expect(appSource).toContain('<TeamName name={match.home} logo={match.homeLogo} interactiveProfile teamCardMatches={matches} />');
+    expect(appSource).toContain('<TeamName name={match.away} logo={match.awayLogo} interactiveProfile teamCardMatches={matches} />');
   });
 
   test("keeps the player ranking table focused on player rows, not extra team triggers", () => {
@@ -20,6 +24,7 @@ describe("team hover profile scope", () => {
   });
 
   test("also enables team profile triggers in the world cup standings page", () => {
-    expect(appSource).toContain('<TeamName name={team.team} logo={team.logo} interactiveProfile />');
+    expect(appSource).toContain('<WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} matches={worldCupTeamCardMatches} />');
+    expect(appSource).toContain('<TeamName name={team.team} logo={team.logo} interactiveProfile teamCardMatches={matches} />');
   });
 });
