@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   buildFifaMappingRows,
@@ -6,6 +8,8 @@ import {
   normalizeFifaMatch,
   shouldSettleFifaResult,
 } from "../lib/fifaSync";
+
+const appSource = readFileSync(resolve(process.cwd(), "src/App.jsx"), "utf8");
 
 describe("fifa sync helpers", () => {
   test("normalizes FIFA match payload into the local provider shape", () => {
@@ -116,6 +120,31 @@ describe("fifa sync helpers", () => {
     ];
 
     expect(buildFifaMappingRows(localMatches, fifaMatches)[0]).toMatchObject({
+      mapping_status: "matched",
+    });
+  });
+
+  test("keeps local match 31 aligned with FIFA kickoff time", () => {
+    const rows = extractScheduleRowsFromAppSource(appSource).filter((row) => row[0] === 31);
+    const localMatches = buildLocalScheduleFromRows(rows);
+    const fifaMatches = [
+      normalizeFifaMatch({
+        IdMatch: "400021460",
+        MatchNumber: 31,
+        Date: "2026-06-20T03:00:00Z",
+        MatchStatus: 1,
+        MatchTime: "0'",
+        ResultType: 0,
+        HomeTeamScore: null,
+        AwayTeamScore: null,
+        Home: { IdTeam: "43972", TeamName: [{ Locale: "en-GB", Description: "Türkiye" }] },
+        Away: { IdTeam: "43928", TeamName: [{ Locale: "en-GB", Description: "Paraguay" }] },
+      }),
+    ];
+
+    expect(buildFifaMappingRows(localMatches, fifaMatches)[0]).toMatchObject({
+      match_no: 31,
+      provider_match_id: "400021460",
       mapping_status: "matched",
     });
   });
