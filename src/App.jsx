@@ -52,6 +52,7 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { createProfileRecord, ensureProfileRecord } from "./lib/profileRecords";
 import { reportPredictionSubmissionDiagnostic } from "./lib/predictionDiagnostics";
 import { savePredictionWithRecovery } from "./lib/predictionSubmission";
+import { fetchAllRows } from "./lib/supabasePagination";
 import {
   ACHIEVEMENT_DEFINITIONS,
   ACHIEVEMENT_RARITIES,
@@ -2051,6 +2052,13 @@ export default function WorldCupPredictionMVP() {
   }
 
   async function loadSupabaseData(baseMatches) {
+    const predictionsPromise = fetchAllRows({
+      supabase,
+      table: "predictions",
+      orderBy: "submitted_at",
+      ascending: true,
+    });
+
     const [
       profilesResult,
       predictionsResult,
@@ -2063,7 +2071,7 @@ export default function WorldCupPredictionMVP() {
       sponsorPredictionResultsResult,
     ] = await Promise.all([
       supabase.from("profiles").select("*").order("joined_at", { ascending: true }),
-      supabase.from("predictions").select("*").order("submitted_at", { ascending: true }),
+      predictionsPromise,
       supabase.from("fun_predictions").select("*"),
       supabase.from("sponsor_predictions").select("*"),
       supabase.from("match_overrides").select("*"),

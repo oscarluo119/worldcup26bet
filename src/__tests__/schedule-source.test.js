@@ -24,6 +24,12 @@ describe("schedule source bootstrap", () => {
     expect(appSource).not.toContain("const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 2), [filteredMatches, currentTime]);");
   });
 
+  test("loads predictions through paginated Supabase reads instead of a single 1000-row page", () => {
+    expect(appSource).toContain('fetchAllRows({');
+    expect(appSource).toContain('table: "predictions"');
+    expect(appSource).not.toContain('supabase.from("predictions").select("*").order("submitted_at", { ascending: true })');
+  });
+
   test("shows the local schedule source label in the full schedule page", () => {
     expect(appSource).toContain("本地权威赛程");
     expect(appSource).not.toContain("WorldCupAPI 实时赛程");
