@@ -53,6 +53,50 @@ export function normalizeUserFacingError(error, context = "general") {
   }
 
   if (
+    code === "prediction_locked"
+    || message.includes("prediction_locked")
+  ) {
+    return buildResult("比赛已锁定，不能再修改预测。", {
+      rawMessage,
+      code: "prediction_locked",
+      category: "validation",
+    });
+  }
+
+  if (
+    code === "session_missing"
+    || message.includes("session_missing")
+  ) {
+    return buildResult("登录状态已失效，请重新登录后再试。", {
+      rawMessage,
+      code: "session_missing",
+      category: "auth",
+    });
+  }
+
+  if (
+    code === "invalid_prediction_input"
+    || message.includes("invalid_prediction_input")
+  ) {
+    return buildResult("提交的比分格式不正确，请检查后重试。", {
+      rawMessage,
+      code: "invalid_prediction_input",
+      category: "validation",
+    });
+  }
+
+  if (
+    code === "profile_not_ready"
+    || message.includes("profile_not_ready")
+  ) {
+    return buildResult("账号资料还没初始化完成，请重新登录后再试。", {
+      rawMessage,
+      code: "profile_not_ready",
+      category: "data",
+    });
+  }
+
+  if (
     error instanceof TypeError
     || message.includes("failed to fetch")
     || message.includes("networkerror")
@@ -193,6 +237,17 @@ export function normalizeUserFacingError(error, context = "general") {
       rawMessage,
       code: "duplicate_data",
       category: "conflict",
+    });
+  }
+
+  if (
+    (context === "prediction_save" && code === "23503")
+    || (context === "prediction_save" && message.includes("violates foreign key constraint"))
+  ) {
+    return buildResult("账号资料还没初始化完成，请重新登录后再试。", {
+      rawMessage,
+      code: "profile_not_ready",
+      category: "data",
     });
   }
 

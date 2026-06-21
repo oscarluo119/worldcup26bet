@@ -49,6 +49,8 @@ import {
   YAxis,
 } from "recharts";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { createProfileRecord, ensureProfileRecord } from "./lib/profileRecords";
+import { savePredictionWithRecovery } from "./lib/predictionSubmission";
 import {
   ACHIEVEMENT_DEFINITIONS,
   ACHIEVEMENT_RARITIES,
@@ -1651,12 +1653,13 @@ function AuthScreen({ onSignedIn }) {
           options: { data: { username: cleanUsername, avatar_emoji: avatarEmoji } },
         });
         if (signUpError) throw signUpError;
-        if (data.user) {
-          await supabase.from("profiles").insert({
-            id: data.user.id,
+        if (data.user && data.session) {
+          await createProfileRecord({
+            supabase,
+            userId: data.user.id,
             email: data.user.email || cleanEmail,
             username: cleanUsername,
-            avatar_emoji: avatarEmoji,
+            avatarEmoji,
           });
         }
         if (data.session) {
@@ -2038,22 +2041,12 @@ export default function WorldCupPredictionMVP() {
   }, []);
 
   async function ensureProfile(user) {
-    const email = user.email || "";
-    const { data: existing, error: selectError } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (selectError) throw selectError;
-    if (existing) return;
-
-    const { error } = await supabase.from("profiles").insert({
-      id: user.id,
-      email,
-      username: getDisplayName(user),
-      avatar_emoji: user.user_metadata?.avatar_emoji || DEFAULT_AVATAR_EMOJI,
+    await ensureProfileRecord({
+      supabase,
+      user,
+      getDisplayName,
+      defaultAvatarEmoji: DEFAULT_AVATAR_EMOJI,
     });
-    if (error) throw error;
   }
 
   async function loadSupabaseData(baseMatches) {
@@ -2300,27 +2293,25 @@ export default function WorldCupPredictionMVP() {
 
   async function upsertPrediction(matchId, home, away) {
     const match = matches.find((m) => m.id === matchId);
-    if (!currentPlayerId || !match || isMatchLocked(match, currentTime) || !Number.isFinite(home) || !Number.isFinite(away)) return;
     const existed = predictions.some((p) => p.playerId === currentPlayerId && p.matchId === matchId);
-    const safeHome = Math.max(0, Math.floor(home));
-    const safeAway = Math.max(0, Math.floor(away));
-    const submittedAt = new Date().toISOString();
-    const { data, error } = await supabase
-      .from("predictions")
-      .upsert({
-        user_id: currentPlayerId,
-        match_id: matchId,
-        home: safeHome,
-        away: safeAway,
-        submitted_at: submittedAt,
-      }, { onConflict: "user_id,match_id" })
-      .select()
-      .single();
-    if (error) {
+    const result = await savePredictionWithRecovery({
+      supabase,
+      match,
+      currentPlayerId,
+      sessionUser: session?.user || null,
+      home,
+      away,
+      now: currentTime,
+      existed,
+      ensureProfile,
+      logger: (label, payload) => console.error(label, payload),
+    });
+    if (!result.ok) {
+      const { error } = result;
       showUserError(error, "prediction_save");
       return;
     }
-    const saved = mapPrediction(data);
+    const saved = mapPrediction(result.saved);
     setPredictions((prev) => {
       const existing = prev.find((p) => p.playerId === currentPlayerId && p.matchId === matchId);
       if (existing) return prev.map((p) => (p.id === existing.id ? saved : p));

@@ -46,4 +46,18 @@ describe("normalizeUserFacingError", () => {
       category: "permission",
     });
   });
+
+  test("translates missing profile foreign-key failures for prediction saves", () => {
+    expect(normalizeUserFacingError({ message: "insert or update on table \"predictions\" violates foreign key constraint", code: "23503" }, "prediction_save")).toMatchObject({
+      code: "profile_not_ready",
+      category: "data",
+    });
+  });
+
+  test("translates explicit prediction lock errors", () => {
+    expect(normalizeUserFacingError({ message: "prediction_locked", code: "prediction_locked" }, "prediction_save")).toMatchObject({
+      code: "prediction_locked",
+      category: "validation",
+    });
+  });
 });
