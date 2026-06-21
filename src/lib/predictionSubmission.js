@@ -41,19 +41,19 @@ export async function savePredictionWithRecovery({
   if (!sessionUser?.id || !currentPlayerId || currentPlayerId !== sessionUser.id) {
     const error = createSubmissionError("session_missing", "session_missing", "auth");
     logFailure(logger, "Prediction submission blocked", { ...diagnostics, error });
-    return { ok: false, error };
+    return { ok: false, error, diagnostics };
   }
 
   if (!match || diagnostics.isLocked) {
     const error = createSubmissionError("prediction_locked", "prediction_locked");
     logFailure(logger, "Prediction submission blocked", { ...diagnostics, error });
-    return { ok: false, error };
+    return { ok: false, error, diagnostics };
   }
 
   if (!Number.isFinite(home) || !Number.isFinite(away)) {
     const error = createSubmissionError("invalid_prediction_input", "invalid_prediction_input");
     logFailure(logger, "Prediction submission blocked", { ...diagnostics, error });
-    return { ok: false, error };
+    return { ok: false, error, diagnostics };
   }
 
   try {
@@ -70,7 +70,7 @@ export async function savePredictionWithRecovery({
         causeDetails: cause?.details || "",
       },
     });
-    return { ok: false, error };
+    return { ok: false, error, diagnostics };
   }
 
   const safeHome = Math.max(0, Math.floor(home));
@@ -96,7 +96,7 @@ export async function savePredictionWithRecovery({
         details: error.details || "",
       },
     });
-    return { ok: false, error };
+    return { ok: false, error, diagnostics };
   }
 
   return {

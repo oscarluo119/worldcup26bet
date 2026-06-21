@@ -77,6 +77,12 @@ describe("savePredictionWithRecovery", () => {
       error: {
         code: "profile_not_ready",
       },
+      diagnostics: {
+        matchId: "match-1",
+        currentPlayerId: "user-1",
+        sessionUserId: "user-1",
+        existed: false,
+      },
     });
     expect(supabase.upsert).not.toHaveBeenCalled();
     expect(logger).toHaveBeenCalled();
@@ -101,6 +107,9 @@ describe("savePredictionWithRecovery", () => {
       error: {
         code: "prediction_locked",
       },
+      diagnostics: {
+        matchId: "match-1",
+      },
     });
   });
 
@@ -122,6 +131,9 @@ describe("savePredictionWithRecovery", () => {
       ok: false,
       error: {
         code: "invalid_prediction_input",
+      },
+      diagnostics: {
+        currentPlayerId: "user-1",
       },
     });
   });

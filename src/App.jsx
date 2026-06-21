@@ -50,6 +50,7 @@ import {
 } from "recharts";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { createProfileRecord, ensureProfileRecord } from "./lib/profileRecords";
+import { reportPredictionSubmissionDiagnostic } from "./lib/predictionDiagnostics";
 import { savePredictionWithRecovery } from "./lib/predictionSubmission";
 import {
   ACHIEVEMENT_DEFINITIONS,
@@ -2308,6 +2309,11 @@ export default function WorldCupPredictionMVP() {
     });
     if (!result.ok) {
       const { error } = result;
+      reportPredictionSubmissionDiagnostic({
+        invoke: (payload) => supabase.functions.invoke("report-prediction-submit-diagnostic", payload),
+        diagnostics: result.diagnostics,
+        error,
+      });
       showUserError(error, "prediction_save");
       return;
     }
