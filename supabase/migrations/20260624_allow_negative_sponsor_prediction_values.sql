@@ -1,0 +1,2 @@
+alter table public.sponsor_predictions
+drop constraint if exists sponsor_predictions_predicted_total_seconds_check;

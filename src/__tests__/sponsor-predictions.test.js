@@ -28,6 +28,7 @@ import {
 } from "../lib/sponsorPredictions";
 
 const appSource = readFileSync(resolve(process.cwd(), "src/App.jsx"), "utf8");
+const allowNegativeMigrationSource = readFileSync(resolve(process.cwd(), "supabase/migrations/20260624_allow_negative_sponsor_prediction_values.sql"), "utf8");
 
 describe("sponsor predictions", () => {
   test("resolves the first scored match by skipping goalless earlier matches", () => {
@@ -364,6 +365,13 @@ describe("sponsor predictions", () => {
     expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.label === "第二轮总积分")).toBe(true);
     expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.label === "第二轮总进球")).toBe(true);
     expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.id === CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID)).toBe(true);
+  });
+
+  test("database migration allows negative sponsor prediction values", () => {
+    const normalizedSource = allowNegativeMigrationSource.toLowerCase();
+
+    expect(normalizedSource).toContain("drop constraint if exists sponsor_predictions_predicted_total_seconds_check");
+    expect(normalizedSource).not.toContain("predicted_total_seconds >= 0");
   });
 
   test("adds the all-features tab and replaces the mobile profile tab", () => {
