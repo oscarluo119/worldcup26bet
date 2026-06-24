@@ -6,16 +6,65 @@ export const ASIA_ROUND2_GOALS_EVENT_ID = "asia_round2_goals";
 export const ASIA_ROUND2_GROUP_ID = "asia_round2";
 export const ASIA_ROUND2_DEADLINE_AT = "2026-06-18T16:00:00.000Z";
 
+export const CUT_LINE_MASTER_GROUP_ID = "cut_line_master";
+export const CUT_LINE_MASTER_POINTS_EVENT_ID = "cut_line_master_points";
+export const CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID = "cut_line_master_goal_difference";
+export const CUT_LINE_MASTER_GOALS_EVENT_ID = "cut_line_master_goals";
+export const CUT_LINE_MASTER_DEADLINE_AT = "2026-06-24T19:00:00.000Z";
+
+const ASIA_SPONSOR_NAME = "月半洛夫维奇";
+const CUT_LINE_MASTER_SPONSOR_NAME = "卡线大师";
+const GROUP_LETTERS = "ABCDEFGHIJKL".split("");
+
 export const SPONSOR_PREDICTION_GROUPS = [
   {
-    id: ASIA_ROUND2_GROUP_ID,
-    sponsorName: "月半洛夫维奇",
-    title: "亚洲球队（含澳大利亚）第二轮总表现预测",
-    awardTitle: "亚洲之巅",
-    description: "预测亚洲球队（含澳大利亚）在小组赛第2场的总积分和总进球数。两题分别按接近程度排名积分，总分最高者获得称号。",
-    helperText: "官方答案会随比赛结算自动统计更新；两题分别排序积分后相加。",
+    id: CUT_LINE_MASTER_GROUP_ID,
+    sponsorName: CUT_LINE_MASTER_SPONSOR_NAME,
+    title: "第三名卡线队预测",
+    awardTitle: "卡线大师",
+    description: "预测 12 个小组第三里第 8 名那支队，也就是最后一张第三名晋级门票的边缘球队，最终会拿到多少积分、净胜球和进球数。",
+    helperText: "按误差依次比较：先看积分误差，再看净胜球误差，最后看进球误差；误差完全相同则并列获得称号。",
     historical: false,
     collapseByDefault: false,
+    lockMode: "fixed_deadline",
+    deadlineAt: CUT_LINE_MASTER_DEADLINE_AT,
+    resultMode: "auto_cut_line_master",
+    events: [
+      {
+        id: CUT_LINE_MASTER_POINTS_EVENT_ID,
+        label: "卡线队积分",
+        titleName: "卡线大师",
+        placeholder: "例如：5",
+        valueType: "integer",
+        helperText: "预测这支最边缘第三名球队最终拿到的积分。",
+      },
+      {
+        id: CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID,
+        label: "卡线队净胜球",
+        titleName: "卡线大师",
+        placeholder: "例如：-1",
+        valueType: "signed_integer",
+        helperText: "预测这支最边缘第三名球队最终的净胜球。",
+      },
+      {
+        id: CUT_LINE_MASTER_GOALS_EVENT_ID,
+        label: "卡线队进球数",
+        titleName: "卡线大师",
+        placeholder: "例如：3",
+        valueType: "integer",
+        helperText: "预测这支最边缘第三名球队最终的总进球数。",
+      },
+    ],
+  },
+  {
+    id: ASIA_ROUND2_GROUP_ID,
+    sponsorName: ASIA_SPONSOR_NAME,
+    title: "亚洲球队（含澳大利亚）第二轮总表现预测",
+    awardTitle: "亚洲之巅",
+    description: "预测亚洲球队（含澳大利亚）在小组赛第 2 场的总积分和总进球数。两题分别按接近程度排名积分，总分最高者获得称号。",
+    helperText: "官方答案会随比赛结算自动统计更新；两题分别排序积分后相加。",
+    historical: true,
+    collapseByDefault: true,
     lockMode: "fixed_deadline",
     deadlineAt: ASIA_ROUND2_DEADLINE_AT,
     resultMode: "auto_afc_round2",
@@ -26,15 +75,15 @@ export const SPONSOR_PREDICTION_GROUPS = [
         titleName: "亚洲之巅",
         placeholder: "例如：8",
         valueType: "integer",
-        helperText: "统计亚洲球队（含澳大利亚）各自第2场小组赛拿到的积分总和。",
+        helperText: "统计亚洲球队（含澳大利亚）各自第 2 场小组赛拿到的积分总和。",
       },
       {
         id: ASIA_ROUND2_GOALS_EVENT_ID,
         label: "第二轮总进球",
         titleName: "亚洲之巅",
-        placeholder: "例如：6",
+        placeholder: "例如：7",
         valueType: "integer",
-        helperText: "统计亚洲球队（含澳大利亚）各自第2场小组赛打进的总进球数。",
+        helperText: "统计亚洲球队（含澳大利亚）各自第 2 场小组赛打进的总进球数。",
       },
     ],
   },
@@ -131,11 +180,14 @@ export function formatSponsorPredictionClock(totalSeconds) {
 export function formatSponsorPredictionValue(event, value) {
   if (!Number.isFinite(Number(value))) return "--";
   if (event?.valueType === "clock") return formatSponsorPredictionClock(value);
-  return `${Math.max(0, Math.floor(Number(value)))}`;
+  return `${Math.trunc(Number(value))}`;
 }
 
 export function getSponsorPredictionDeadlineLabel(event, firstKickoff) {
   const resolvedEvent = event?.id ? (SPONSOR_PREDICTION_EVENT_BY_ID[event.id] || event) : event;
+  if (resolvedEvent?.id === CUT_LINE_MASTER_POINTS_EVENT_ID || resolvedEvent?.groupId === CUT_LINE_MASTER_GROUP_ID) {
+    return "北京时间 2026/06/25 03:00";
+  }
   if (resolvedEvent?.lockMode === "fixed_deadline") return "北京时间 2026/06/19 00:00";
   if (!firstKickoff) return "--";
   return firstKickoff;
@@ -145,7 +197,10 @@ export function isSponsorPredictionLocked(event, { now = new Date(), firstKickof
   const resolvedEvent = event?.id ? (SPONSOR_PREDICTION_EVENT_BY_ID[event.id] || event) : event;
   const current = new Date(now);
   if (resolvedEvent?.lockMode === "fixed_deadline") {
-    return current >= new Date(resolvedEvent.deadlineAt || ASIA_ROUND2_DEADLINE_AT);
+    const fallbackDeadline = resolvedEvent?.groupId === CUT_LINE_MASTER_GROUP_ID || resolvedEvent?.id?.startsWith(CUT_LINE_MASTER_GROUP_ID)
+      ? CUT_LINE_MASTER_DEADLINE_AT
+      : ASIA_ROUND2_DEADLINE_AT;
+    return current >= new Date(resolvedEvent.deadlineAt || fallbackDeadline);
   }
   if (!firstKickoff) return false;
   return current >= new Date(firstKickoff);
@@ -269,33 +324,178 @@ export function calculateAsiaRound2Stats(matches) {
   };
 }
 
+function normalizeGroupKey(group) {
+  const text = String(group || "").trim();
+  if (/^[A-L]组$/.test(text)) return text;
+  if (/^[A-L]$/.test(text)) return `${text}组`;
+  return text;
+}
+
+function sortThirdPlaceTeams(teams) {
+  return [...teams].sort((a, b) =>
+    b.points - a.points ||
+    b.goalDifference - a.goalDifference ||
+    b.goalsFor - a.goalsFor ||
+    String(a.team || "").localeCompare(String(b.team || ""), "zh-CN")
+  );
+}
+
+function createEmptyStanding(group, team) {
+  return {
+    group,
+    team,
+    played: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDifference: 0,
+    points: 0,
+  };
+}
+
+function buildWorldCupStandingsFromMatches(matches) {
+  const settledGroupMatches = [...(matches || [])]
+    .filter((match) => match?.stage === "GROUP")
+    .map((match) => ({
+      ...match,
+      group: normalizeGroupKey(match.group),
+    }))
+    .filter((match) => /^[A-L]组$/.test(match.group));
+
+  const tableMap = new Map();
+  settledGroupMatches.forEach((match) => {
+    [match.home, match.away].forEach((team) => {
+      const key = `${match.group}-${team}`;
+      if (!tableMap.has(key)) tableMap.set(key, createEmptyStanding(match.group, team));
+    });
+  });
+
+  settledGroupMatches
+    .filter((match) => match?.status === "settled")
+    .filter((match) => Number.isFinite(match?.homeScore) && Number.isFinite(match?.awayScore))
+    .forEach((match) => {
+      const homeKey = `${match.group}-${match.home}`;
+      const awayKey = `${match.group}-${match.away}`;
+      const homeTeam = tableMap.get(homeKey);
+      const awayTeam = tableMap.get(awayKey);
+      if (!homeTeam || !awayTeam) return;
+
+      homeTeam.played += 1;
+      awayTeam.played += 1;
+      homeTeam.goalsFor += Number(match.homeScore);
+      homeTeam.goalsAgainst += Number(match.awayScore);
+      awayTeam.goalsFor += Number(match.awayScore);
+      awayTeam.goalsAgainst += Number(match.homeScore);
+      if (Number(match.homeScore) > Number(match.awayScore)) {
+        homeTeam.points += 3;
+      } else if (Number(match.homeScore) < Number(match.awayScore)) {
+        awayTeam.points += 3;
+      } else {
+        homeTeam.points += 1;
+        awayTeam.points += 1;
+      }
+      homeTeam.goalDifference = homeTeam.goalsFor - homeTeam.goalsAgainst;
+      awayTeam.goalDifference = awayTeam.goalsFor - awayTeam.goalsAgainst;
+    });
+
+  return Array.from(tableMap.values()).reduce((acc, team) => {
+    if (!acc[team.group]) acc[team.group] = [];
+    acc[team.group].push(team);
+    return acc;
+  }, {});
+}
+
+export function calculateCutLineMasterStats(standings) {
+  const normalizedStandings = standings || {};
+  const bestThirdTeams = GROUP_LETTERS
+    .map((letter) => normalizedStandings[`${letter}组`])
+    .map((table) => Array.isArray(table) && table.length >= 3 ? sortThirdPlaceTeams(table)[2] : null)
+    .filter(Boolean)
+    .map((team) => ({
+      ...team,
+      group: normalizeGroupKey(team.group),
+    }));
+
+  const rankedThirdTeams = sortThirdPlaceTeams(bestThirdTeams);
+  const cutLineTeam = rankedThirdTeams[7] || rankedThirdTeams[rankedThirdTeams.length - 1] || null;
+
+  return {
+    team: cutLineTeam?.team || "",
+    group: cutLineTeam?.group || "",
+    points: cutLineTeam?.points,
+    goalDifference: cutLineTeam?.goalDifference,
+    goalsFor: cutLineTeam?.goalsFor,
+    completedGroups: bestThirdTeams.length,
+    totalGroups: GROUP_LETTERS.length,
+    isComplete: bestThirdTeams.length >= GROUP_LETTERS.length,
+    rankedThirdTeams,
+  };
+}
+
+export function calculateCutLineMasterStatsFromMatches(matches) {
+  return calculateCutLineMasterStats(buildWorldCupStandingsFromMatches(matches));
+}
+
 export function getAutomaticSponsorPredictionResults({ matches }) {
   const asiaStats = calculateAsiaRound2Stats(matches);
+  const cutLineStats = calculateCutLineMasterStatsFromMatches(matches);
   const pointsValue = asiaStats.completedTeams ? asiaStats.totalPoints : undefined;
   const goalsValue = asiaStats.completedTeams ? asiaStats.totalGoals : undefined;
+  const cutLinePoints = Number.isFinite(cutLineStats.points) ? cutLineStats.points : undefined;
+  const cutLineGoalDifference = Number.isFinite(cutLineStats.goalDifference) ? cutLineStats.goalDifference : undefined;
+  const cutLineGoals = Number.isFinite(cutLineStats.goalsFor) ? cutLineStats.goalsFor : undefined;
+
   return {
+    [CUT_LINE_MASTER_POINTS_EVENT_ID]: {
+      resolvedMatchId: "auto-cut-line-master-points",
+      actualValue: cutLinePoints,
+      actualTotalSeconds: cutLinePoints,
+      sponsorName: CUT_LINE_MASTER_SPONSOR_NAME,
+      resolvedAt: cutLineStats.completedGroups ? new Date().toISOString() : "",
+    },
+    [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: {
+      resolvedMatchId: "auto-cut-line-master-goal-difference",
+      actualValue: cutLineGoalDifference,
+      actualTotalSeconds: cutLineGoalDifference,
+      sponsorName: CUT_LINE_MASTER_SPONSOR_NAME,
+      resolvedAt: cutLineStats.completedGroups ? new Date().toISOString() : "",
+    },
+    [CUT_LINE_MASTER_GOALS_EVENT_ID]: {
+      resolvedMatchId: "auto-cut-line-master-goals",
+      actualValue: cutLineGoals,
+      actualTotalSeconds: cutLineGoals,
+      sponsorName: CUT_LINE_MASTER_SPONSOR_NAME,
+      resolvedAt: cutLineStats.completedGroups ? new Date().toISOString() : "",
+    },
     [ASIA_ROUND2_POINTS_EVENT_ID]: {
       resolvedMatchId: "auto-afc-round2-points",
       actualValue: pointsValue,
       actualTotalSeconds: pointsValue,
-      sponsorName: "月半洛夫维奇",
+      sponsorName: ASIA_SPONSOR_NAME,
       resolvedAt: asiaStats.completedTeams ? new Date().toISOString() : "",
     },
     [ASIA_ROUND2_GOALS_EVENT_ID]: {
       resolvedMatchId: "auto-afc-round2-goals",
       actualValue: goalsValue,
       actualTotalSeconds: goalsValue,
-      sponsorName: "月半洛夫维奇",
+      sponsorName: ASIA_SPONSOR_NAME,
       resolvedAt: asiaStats.completedTeams ? new Date().toISOString() : "",
     },
   };
 }
 
 export function getResolvedSponsorPredictionResults({ matches, sponsorPredictionResults }) {
-  return {
+  const mergedResults = {
     ...(sponsorPredictionResults || {}),
-    ...getAutomaticSponsorPredictionResults({ matches }),
   };
+  const automaticResults = getAutomaticSponsorPredictionResults({ matches });
+
+  Object.entries(automaticResults).forEach(([eventId, result]) => {
+    if (Number.isFinite(result?.actualValue) || Number.isFinite(result?.actualTotalSeconds)) {
+      mergedResults[eventId] = result;
+    }
+  });
+
+  return mergedResults;
 }
 
 function buildRankedScores(players, predictionsByUserId, result) {
@@ -368,6 +568,64 @@ export function getGroupPredictionWinners(standings) {
   return standings.filter((entry) => entry.totalScore === topScore);
 }
 
+function buildCutLineMasterCandidate(player, sponsorPredictions, sponsorPredictionResults) {
+  const pointsPrediction = getPredictionNumericValue(sponsorPredictions?.[CUT_LINE_MASTER_POINTS_EVENT_ID]?.[player.id]);
+  const goalDifferencePrediction = getPredictionNumericValue(sponsorPredictions?.[CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]?.[player.id]);
+  const goalsPrediction = getPredictionNumericValue(sponsorPredictions?.[CUT_LINE_MASTER_GOALS_EVENT_ID]?.[player.id]);
+  const actualPoints = getResultNumericValue(sponsorPredictionResults?.[CUT_LINE_MASTER_POINTS_EVENT_ID]);
+  const actualGoalDifference = getResultNumericValue(sponsorPredictionResults?.[CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]);
+  const actualGoals = getResultNumericValue(sponsorPredictionResults?.[CUT_LINE_MASTER_GOALS_EVENT_ID]);
+
+  if (![pointsPrediction, goalDifferencePrediction, goalsPrediction, actualPoints, actualGoalDifference, actualGoals].every((value) => Number.isFinite(value))) {
+    return null;
+  }
+
+  return {
+    id: player.id,
+    name: player.name,
+    pointsDiff: Math.abs(pointsPrediction - actualPoints),
+    goalDifferenceDiff: Math.abs(goalDifferencePrediction - actualGoalDifference),
+    goalsDiff: Math.abs(goalsPrediction - actualGoals),
+  };
+}
+
+function compareCutLineMasterCandidates(left, right) {
+  return left.pointsDiff - right.pointsDiff ||
+    left.goalDifferenceDiff - right.goalDifferenceDiff ||
+    left.goalsDiff - right.goalsDiff ||
+    left.name.localeCompare(right.name, "zh-CN");
+}
+
+export function getCutLineMasterStandings({
+  players,
+  sponsorPredictions,
+  sponsorPredictionResults,
+}) {
+  return (players || [])
+    .map((player) => buildCutLineMasterCandidate(player, sponsorPredictions, sponsorPredictionResults))
+    .filter(Boolean)
+    .sort(compareCutLineMasterCandidates);
+}
+
+export function getCutLineMasterWinners({
+  players,
+  sponsorPredictions,
+  sponsorPredictionResults,
+}) {
+  const standings = getCutLineMasterStandings({
+    players,
+    sponsorPredictions,
+    sponsorPredictionResults,
+  });
+  if (!standings.length) return [];
+  const best = standings[0];
+  return standings.filter((entry) => (
+    entry.pointsDiff === best.pointsDiff &&
+    entry.goalDifferenceDiff === best.goalDifferenceDiff &&
+    entry.goalsDiff === best.goalsDiff
+  ));
+}
+
 export function getPlayerSponsorTitles({
   playerId,
   players,
@@ -389,6 +647,14 @@ export function getPlayerSponsorTitles({
       return winners.some((player) => player.id === playerId);
     })
     .map((event) => event.titleName);
+
+  if (getCutLineMasterWinners({
+    players,
+    sponsorPredictions,
+    sponsorPredictionResults: resolvedResults,
+  }).some((entry) => entry.id === playerId)) {
+    eventTitles.push("卡线大师");
+  }
 
   const asiaStandings = getSponsorPredictionGroupStandings({
     eventIds: [ASIA_ROUND2_POINTS_EVENT_ID, ASIA_ROUND2_GOALS_EVENT_ID],

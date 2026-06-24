@@ -5,11 +5,21 @@ import {
   ASIA_ROUND2_DEADLINE_AT,
   ASIA_ROUND2_GOALS_EVENT_ID,
   ASIA_ROUND2_POINTS_EVENT_ID,
+  CUT_LINE_MASTER_DEADLINE_AT,
+  CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID,
+  CUT_LINE_MASTER_GOALS_EVENT_ID,
+  CUT_LINE_MASTER_GROUP_ID,
+  CUT_LINE_MASTER_POINTS_EVENT_ID,
   FIRST_GOAL_TIME_EVENT_ID,
   SPONSOR_PREDICTION_EVENTS,
+  SPONSOR_PREDICTION_GROUP_BY_ID,
+  SPONSOR_PREDICTION_GROUPS,
+  calculateCutLineMasterStats,
   calculateAsiaRound2Stats,
   getFirstGoalResolvedMatch,
+  getCutLineMasterWinners,
   getGroupPredictionWinners,
+  getPlayerSponsorTitles,
   getSponsorPredictionDeadlineLabel,
   getSponsorPredictionGroupStandings,
   getSponsorPredictionWinners,
@@ -85,6 +95,76 @@ describe("sponsor predictions", () => {
     expect(getSponsorPredictionDeadlineLabel({ id: ASIA_ROUND2_POINTS_EVENT_ID })).toContain("2026/06/19 00:00");
   });
 
+  test("defines cut line master as the current sponsor prediction group and archives Asia summit", () => {
+    const cutLineGroup = SPONSOR_PREDICTION_GROUP_BY_ID[CUT_LINE_MASTER_GROUP_ID];
+    const asiaGroup = SPONSOR_PREDICTION_GROUPS.find((group) => group.id === "asia_round2");
+
+    expect(cutLineGroup).toMatchObject({
+      awardTitle: "卡线大师",
+      historical: false,
+      collapseByDefault: false,
+    });
+    expect(cutLineGroup.events.map((event) => event.id)).toEqual([
+      CUT_LINE_MASTER_POINTS_EVENT_ID,
+      CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID,
+      CUT_LINE_MASTER_GOALS_EVENT_ID,
+    ]);
+    expect(asiaGroup).toMatchObject({
+      historical: true,
+      collapseByDefault: true,
+    });
+    expect(isSponsorPredictionLocked({ id: CUT_LINE_MASTER_POINTS_EVENT_ID }, { now: "2026-06-24T18:59:59.000Z" })).toBe(false);
+    expect(isSponsorPredictionLocked({ id: CUT_LINE_MASTER_POINTS_EVENT_ID }, { now: CUT_LINE_MASTER_DEADLINE_AT })).toBe(true);
+    expect(getSponsorPredictionDeadlineLabel({ id: CUT_LINE_MASTER_POINTS_EVENT_ID })).toContain("2026/06/25 03:00");
+  });
+
+  test("tracks the eighth-best third place team for cut line master stats", () => {
+    const standings = {};
+    "ABCDEFGHIJKL".split("").forEach((group, index) => {
+      standings[`${group}组`] = [
+        { group: `${group}组`, team: `${group}1`, points: 9, goalDifference: 5, goalsFor: 8 },
+        { group: `${group}组`, team: `${group}2`, points: 6, goalDifference: 2, goalsFor: 5 },
+        { group: `${group}组`, team: `${group}3`, points: 4 + (index % 2), goalDifference: 3 - index, goalsFor: 10 - index },
+        { group: `${group}组`, team: `${group}4`, points: 0, goalDifference: -6, goalsFor: 1 },
+      ];
+    });
+
+    const stats = calculateCutLineMasterStats(standings);
+
+    expect(stats).toMatchObject({
+      team: "C3",
+      group: "C组",
+      points: 4,
+      goalDifference: 1,
+      goalsFor: 8,
+      completedGroups: 12,
+      isComplete: true,
+    });
+  });
+
+  test("marks cut line master stats incomplete until all twelve third-place teams exist", () => {
+    const stats = calculateCutLineMasterStats({
+      A组: [
+        { group: "A组", team: "A1", points: 7, goalDifference: 3, goalsFor: 6 },
+        { group: "A组", team: "A2", points: 5, goalDifference: 1, goalsFor: 4 },
+        { group: "A组", team: "A3", points: 4, goalDifference: 0, goalsFor: 3 },
+      ],
+      B组: [
+        { group: "B组", team: "B1", points: 6, goalDifference: 2, goalsFor: 5 },
+        { group: "B组", team: "B2", points: 5, goalDifference: 1, goalsFor: 4 },
+      ],
+    });
+
+    expect(stats).toMatchObject({
+      team: "A3",
+      group: "A组",
+      points: 4,
+      completedGroups: 1,
+      totalGroups: 12,
+      isComplete: false,
+    });
+  });
+
   test("scores Asia round-two group standings by combining two ranked numeric events", () => {
     const standings = getSponsorPredictionGroupStandings({
       eventIds: [ASIA_ROUND2_POINTS_EVENT_ID, ASIA_ROUND2_GOALS_EVENT_ID],
@@ -119,6 +199,106 @@ describe("sponsor predictions", () => {
 
     const winners = getGroupPredictionWinners(standings);
     expect(winners.map((entry) => entry.id)).toEqual(["u1", "u2"]);
+  });
+
+  test("picks cut line master winners by points diff before goal difference and goals", () => {
+    const winners = getCutLineMasterWinners({
+      players: [
+        { id: "u1", name: "Alpha" },
+        { id: "u2", name: "Beta" },
+        { id: "u3", name: "Gamma" },
+      ],
+      sponsorPredictions: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: {
+          u1: { predictedValue: 4 },
+          u2: { predictedValue: 4 },
+          u3: { predictedValue: 6 },
+        },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: {
+          u1: { predictedValue: -3 },
+          u2: { predictedValue: -4 },
+          u3: { predictedValue: -4 },
+        },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: {
+          u1: { predictedValue: 2 },
+          u2: { predictedValue: 3 },
+          u3: { predictedValue: 4 },
+        },
+      },
+      sponsorPredictionResults: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: { actualValue: 5 },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: { actualValue: -4 },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: { actualValue: 3 },
+      },
+    });
+
+    expect(winners.map((entry) => entry.id)).toEqual(["u2"]);
+    expect(winners[0]).toMatchObject({
+      pointsDiff: 1,
+      goalDifferenceDiff: 0,
+      goalsDiff: 0,
+    });
+  });
+
+  test("allows tied cut line master winners when all three diffs match", () => {
+    const winners = getCutLineMasterWinners({
+      players: [
+        { id: "u1", name: "Alpha" },
+        { id: "u2", name: "Beta" },
+      ],
+      sponsorPredictions: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: {
+          u1: { predictedValue: 4 },
+          u2: { predictedValue: 6 },
+        },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: {
+          u1: { predictedValue: -3 },
+          u2: { predictedValue: -5 },
+        },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: {
+          u1: { predictedValue: 2 },
+          u2: { predictedValue: 4 },
+        },
+      },
+      sponsorPredictionResults: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: { actualValue: 5 },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: { actualValue: -4 },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: { actualValue: 3 },
+      },
+    });
+
+    expect(winners.map((entry) => entry.id)).toEqual(["u1", "u2"]);
+  });
+
+  test("awards the cut line master title through sponsor titles", () => {
+    const titles = getPlayerSponsorTitles({
+      playerId: "u2",
+      players: [
+        { id: "u1", name: "Alpha" },
+        { id: "u2", name: "Beta" },
+      ],
+      sponsorPredictions: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: {
+          u1: { predictedValue: 4 },
+          u2: { predictedValue: 5 },
+        },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: {
+          u1: { predictedValue: -3 },
+          u2: { predictedValue: -4 },
+        },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: {
+          u1: { predictedValue: 2 },
+          u2: { predictedValue: 3 },
+        },
+      },
+      sponsorPredictionResults: {
+        [CUT_LINE_MASTER_POINTS_EVENT_ID]: { actualValue: 5 },
+        [CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]: { actualValue: -4 },
+        [CUT_LINE_MASTER_GOALS_EVENT_ID]: { actualValue: 3 },
+      },
+    });
+
+    expect(titles).toContain("卡线大师");
   });
 
   test("hides unsubmitted players after predictions become public", () => {
@@ -173,14 +353,17 @@ describe("sponsor predictions", () => {
     expect(appSource.includes("我的冠名预测")).toBe(false);
   });
 
-  test("shows Asia summit sponsor UI and collapses the old first-goal event", () => {
+  test("shows cut line master as the current sponsor UI and archives older sponsor events", () => {
+    expect(appSource.includes("卡线大师")).toBe(true);
+    expect(appSource.includes("新的主玩法是“卡线大师”")).toBe(true);
+    expect(appSource.includes("北京时间 2026/06/25 03:00")).toBe(true);
+    expect(appSource.includes("最边缘第三名")).toBe(true);
     expect(appSource.includes("亚洲之巅")).toBe(true);
-    expect(appSource.includes("截止时间：北京时间 2026/06/19 00:00")).toBe(true);
-    expect(appSource.includes("自动统计状态")).toBe(true);
     expect(appSource.includes("足球研究所所长")).toBe(true);
     expect(appSource.includes("已结束")).toBe(true);
     expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.label === "第二轮总积分")).toBe(true);
     expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.label === "第二轮总进球")).toBe(true);
+    expect(SPONSOR_PREDICTION_EVENTS.some((event) => event.id === CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID)).toBe(true);
   });
 
   test("adds the all-features tab and replaces the mobile profile tab", () => {

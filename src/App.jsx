@@ -75,13 +75,20 @@ import {
   ASIA_ROUND2_GOALS_EVENT_ID,
   ASIA_ROUND2_GROUP_ID,
   ASIA_ROUND2_POINTS_EVENT_ID,
+  CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID,
+  CUT_LINE_MASTER_GOALS_EVENT_ID,
+  CUT_LINE_MASTER_GROUP_ID,
+  CUT_LINE_MASTER_POINTS_EVENT_ID,
   FIRST_GOAL_TIME_EVENT_ID,
   SPONSOR_PREDICTION_GROUPS,
   SPONSOR_PREDICTION_EVENTS,
   SPONSOR_PREDICTION_EVENT_BY_ID,
+  calculateCutLineMasterStatsFromMatches,
   calculateAsiaRound2Stats,
   formatSponsorPredictionValue,
   getAutomaticSponsorPredictionResults,
+  getCutLineMasterStandings,
+  getCutLineMasterWinners,
   getGroupPredictionWinners,
   formatSponsorPredictionClock,
   getFirstGoalResolvedMatch,
@@ -2431,8 +2438,9 @@ export default function WorldCupPredictionMVP() {
   async function saveSponsorPrediction(eventId, predictedValue, { silent = false } = {}) {
     const event = SPONSOR_PREDICTION_EVENT_BY_ID[eventId];
     if (!currentPlayerId || !event || isSponsorPredictionLocked(event, { firstKickoff })) return;
-    const normalizedValue = Math.floor(Number(predictedValue));
-    if (!Number.isFinite(normalizedValue) || normalizedValue < 0) return;
+    const normalizedValue = Math.trunc(Number(predictedValue));
+    const isSignedInteger = event.valueType === "signed_integer";
+    if (!Number.isFinite(normalizedValue) || (!isSignedInteger && normalizedValue < 0)) return;
 
     const submittedAt = new Date().toISOString();
     const { error } = await supabase.from("sponsor_predictions").upsert({
@@ -3499,6 +3507,7 @@ function ScoreInput({ label, value, disabled, onChange }) {
 
 function SponsorPredictionPanel({ currentPlayer, players, matches, sponsorPredictions, sponsorPredictionResults, onSave, firstKickoff }) {
   const asiaStats = useMemo(() => calculateAsiaRound2Stats(matches), [matches]);
+  const cutLineStats = useMemo(() => calculateCutLineMasterStatsFromMatches(matches), [matches]);
 
   return (
     <section className="mt-6 space-y-4 sm:space-y-5">
@@ -3507,16 +3516,18 @@ function SponsorPredictionPanel({ currentPlayer, players, matches, sponsorPredic
           <div>
             <Pill className="mb-2.5"><Trophy className="h-3.5 w-3.5" /> 冠名玩法 · 不额外加分</Pill>
             <h2 className="text-[1.45rem] font-black tracking-tight sm:text-3xl">冠名预测</h2>
-            <p className="mt-2 text-sm text-slate-300">新的主玩法是“亚洲之巅”，历史玩法“足球研究所所长”已折叠收纳。</p>
+            <p className="mt-2 text-sm text-slate-300">新的主玩法是“卡线大师”，历史玩法“亚洲之巅”和“足球研究所所长”已折叠收纳。</p>
           </div>
           <div className="md3-panel-strong grid gap-2 px-3 py-3 text-slate-100 shadow-xl sm:p-4">
             <div>
-              <div className="text-[11px] font-bold md3-subtle">亚洲之巅截止时间</div>
-              <div className="mt-1 text-sm font-black sm:text-lg">北京时间 2026/06/19 00:00</div>
+              <div className="text-[11px] font-bold md3-subtle">卡线大师截止时间</div>
+              <div className="mt-1 text-sm font-black sm:text-lg">北京时间 2026/06/25 03:00</div>
             </div>
             <div>
               <div className="text-[11px] font-bold md3-subtle">当前自动统计</div>
-              <div className="mt-1 text-sm font-black">总积分 {asiaStats.totalPoints} / 总进球 {asiaStats.totalGoals}</div>
+              <div className="mt-1 text-sm font-black">
+                最边缘第三名 {cutLineStats.team ? `${cutLineStats.team} · ${cutLineStats.points ?? "--"}分 / 净胜球 ${cutLineStats.goalDifference ?? "--"} / 进球 ${cutLineStats.goalsFor ?? "--"}` : "等待更多小组赛结算"}
+              </div>
             </div>
           </div>
         </div>
@@ -3555,6 +3566,7 @@ function SponsorPredictionGroupCard({
   const [fieldValues, setFieldValues] = useState({});
   const locked = isSponsorPredictionLocked(group.events[0], { firstKickoff });
   const asiaStats = useMemo(() => (group.id === ASIA_ROUND2_GROUP_ID ? calculateAsiaRound2Stats(matches) : null), [group.id, matches]);
+  const cutLineStats = useMemo(() => (group.id === CUT_LINE_MASTER_GROUP_ID ? calculateCutLineMasterStatsFromMatches(matches) : null), [group.id, matches]);
   const firstGoalMatch = useMemo(() => (group.id === FIRST_GOAL_TIME_EVENT_ID ? getFirstGoalResolvedMatch(matches) : null), [group.id, matches]);
 
   React.useEffect(() => {
@@ -3574,7 +3586,7 @@ function SponsorPredictionGroupCard({
     setFieldValues(nextValues);
   }, [currentPlayer?.id, group.events, sponsorPredictions]);
 
-  const standings = useMemo(() => (
+  const asiaStandings = useMemo(() => (
     group.id === ASIA_ROUND2_GROUP_ID
       ? getSponsorPredictionGroupStandings({
         eventIds: group.events.map((event) => event.id),
@@ -3584,7 +3596,25 @@ function SponsorPredictionGroupCard({
       })
       : []
   ), [group.id, group.events, players, sponsorPredictions, sponsorPredictionResults]);
-  const groupWinners = useMemo(() => getGroupPredictionWinners(standings), [standings]);
+  const asiaGroupWinners = useMemo(() => getGroupPredictionWinners(asiaStandings), [asiaStandings]);
+  const cutLineStandings = useMemo(() => (
+    group.id === CUT_LINE_MASTER_GROUP_ID
+      ? getCutLineMasterStandings({
+        players,
+        sponsorPredictions,
+        sponsorPredictionResults,
+      })
+      : []
+  ), [group.id, players, sponsorPredictions, sponsorPredictionResults]);
+  const cutLineWinners = useMemo(() => (
+    group.id === CUT_LINE_MASTER_GROUP_ID
+      ? getCutLineMasterWinners({
+        players,
+        sponsorPredictions,
+        sponsorPredictionResults,
+      })
+      : []
+  ), [group.id, players, sponsorPredictions, sponsorPredictionResults]);
 
   const fieldMeta = group.events.map((event) => {
     const prediction = sponsorPredictions[event.id]?.[currentPlayer?.id] || null;
@@ -3610,8 +3640,10 @@ function SponsorPredictionGroupCard({
             : null
       )
       : (
-        String(valueState ?? "").trim() !== "" && Number.isFinite(Number(valueState)) && Number(valueState) >= 0
-          ? Math.floor(Number(valueState))
+        String(valueState ?? "").trim() !== ""
+        && Number.isFinite(Number(valueState))
+        && (event.valueType === "signed_integer" || Number(valueState) >= 0)
+          ? Math.trunc(Number(valueState))
           : null
       );
 
@@ -3677,7 +3709,7 @@ function SponsorPredictionGroupCard({
                 </div>
                 <div className="md3-panel-inset px-3 py-3 text-xs leading-6 text-slate-400">
                   <div>截止时间：{getSponsorPredictionDeadlineLabel(group.events[0], firstKickoff instanceof Date ? formatDateTime(firstKickoff) : firstKickoff)}</div>
-                  {group.id === ASIA_ROUND2_GROUP_ID ? <div>官方答案将随比赛结算自动更新</div> : <div>揭幕战开赛后统一锁定并公开所有人的选择</div>}
+                  {group.id === ASIA_ROUND2_GROUP_ID || group.id === CUT_LINE_MASTER_GROUP_ID ? <div>官方答案将随比赛结算自动更新</div> : <div>揭幕战开赛后统一锁定并公开所有人的选择</div>}
                 </div>
                 {fieldMeta.map((item) => (
                   <SponsorPredictionInputCard
@@ -3698,16 +3730,18 @@ function SponsorPredictionGroupCard({
             <Card className={`${CARD_TONE.default} !p-3.5 sm:!p-5`}>
               <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
                 <div>
-                  <h4 className="text-lg font-black sm:text-xl">{group.id === ASIA_ROUND2_GROUP_ID ? "亚洲之巅实时榜" : "朋友的冠名预测"}</h4>
+                  <h4 className="text-lg font-black sm:text-xl">{group.id === ASIA_ROUND2_GROUP_ID ? "亚洲之巅实时榜" : (group.id === CUT_LINE_MASTER_GROUP_ID ? "卡线大师实时榜" : "朋友的冠名预测")}</h4>
                   <p className="mt-1 text-xs text-slate-400">
                     {group.id === ASIA_ROUND2_GROUP_ID
                       ? `当前自动统计：总积分 ${asiaStats.totalPoints} / 总进球 ${asiaStats.totalGoals}`
+                      : (group.id === CUT_LINE_MASTER_GROUP_ID
+                        ? `当前最边缘第三名：${cutLineStats?.team ? `${cutLineStats.team} · ${cutLineStats.points ?? "--"}分 / 净胜球 ${cutLineStats.goalDifference ?? "--"} / 进球 ${cutLineStats.goalsFor ?? "--"}` : "等待更多小组赛结算"}`
                       : (fieldMeta[0]?.result?.actualValue !== undefined
                         ? `官方首球时间：${formatSponsorPredictionClock(fieldMeta[0].result.actualValue)}`
-                        : "等待管理员录入官方首球时间后结算称号")}
+                        : "等待管理员录入官方首球时间后结算称号"))}
                   </p>
                 </div>
-                <Pill>{group.id === ASIA_ROUND2_GROUP_ID ? `已完成第2场：${asiaStats.completedTeams} / ${asiaStats.totalTeams}` : `${Object.keys(fieldMeta[0]?.predictionsByUserId || {}).length}/${players.length} 已提交`}</Pill>
+                <Pill>{group.id === ASIA_ROUND2_GROUP_ID ? `已完成第2场：${asiaStats.completedTeams} / ${asiaStats.totalTeams}` : (group.id === CUT_LINE_MASTER_GROUP_ID ? `已形成第三名：${cutLineStats?.completedGroups || 0} / ${cutLineStats?.totalGroups || 12}` : `${Object.keys(fieldMeta[0]?.predictionsByUserId || {}).length}/${players.length} 已提交`)}</Pill>
               </div>
 
               {group.id === ASIA_ROUND2_GROUP_ID ? (
@@ -3716,7 +3750,7 @@ function SponsorPredictionGroupCard({
                     <div className="rounded-[18px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-secondary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 60%, transparent)" }}>
                       <div className="text-sm font-black text-slate-100">当前总分领先者：亚洲之巅</div>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        {groupWinners.length ? groupWinners.map((entry) => <Pill key={entry.id} className="bg-yellow-500/15 text-yellow-200">{entry.name} · {entry.totalScore} 分</Pill>) : <span className="text-xs text-slate-400">等待有效预测与自动统计结果</span>}
+                        {asiaGroupWinners.length ? asiaGroupWinners.map((entry) => <Pill key={entry.id} className="bg-yellow-500/15 text-yellow-200">{entry.name} · {entry.totalScore} 分</Pill>) : <span className="text-xs text-slate-400">等待有效预测与自动统计结果</span>}
                       </div>
                     </div>
                     <div className="rounded-[18px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
@@ -3742,6 +3776,67 @@ function SponsorPredictionGroupCard({
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              ) : group.id === CUT_LINE_MASTER_GROUP_ID ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-[18px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-secondary) 24%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-secondary-container) 60%, transparent)" }}>
+                      <div className="text-sm font-black text-slate-100">当前称号得主：卡线大师</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {cutLineWinners.length ? cutLineWinners.map((entry) => <Pill key={entry.id} className="bg-yellow-500/15 text-yellow-200">{entry.name} · 积分差 {entry.pointsDiff} / 净胜球差 {entry.goalDifferenceDiff} / 进球差 {entry.goalsDiff}</Pill>) : <span className="text-xs text-slate-400">等待有效预测与自动统计结果</span>}
+                      </div>
+                    </div>
+                    <div className="rounded-[18px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
+                      <div className="text-sm font-black">当前最边缘第三名</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {cutLineStats?.team ? <Pill>{`${cutLineStats.group} · ${cutLineStats.team}`}</Pill> : <span className="text-xs text-slate-400">还没有形成可比较的第 8 名第三名</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-2.5 sm:gap-3 md:grid-cols-3">
+                    {fieldMeta.map((item) => (
+                      <div key={item.event.id} className="md3-card md3-card-tone-highlight !p-3 sm:!p-4">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="font-black">{item.event.label}</div>
+                          <Pill>{item.visiblePlayers.length}/{players.length} 已提交</Pill>
+                        </div>
+                        <div className="space-y-1.5 text-xs sm:text-sm">
+                          <InfoRow label="当前答案" value={formatSponsorPredictionValue(item.event, item.result?.actualValue)} />
+                          <InfoRow label="我的预测" value={formatSponsorPredictionValue(item.event, item.prediction?.predictedValue)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid gap-2.5 sm:gap-3 md:grid-cols-2">
+                    {cutLineStandings.filter((entry) => locked || entry.id === currentPlayer?.id).map((entry) => {
+                      const pointsPrediction = sponsorPredictions[CUT_LINE_MASTER_POINTS_EVENT_ID]?.[entry.id];
+                      const goalDifferencePrediction = sponsorPredictions[CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]?.[entry.id];
+                      const goalsPrediction = sponsorPredictions[CUT_LINE_MASTER_GOALS_EVENT_ID]?.[entry.id];
+                      const isWinner = cutLineWinners.some((winner) => winner.id === entry.id);
+                      const player = players.find((item) => item.id === entry.id);
+                      if (!player) return null;
+                      return (
+                        <div key={entry.id} className="md3-card md3-card-tone-highlight !p-3 sm:!p-4">
+                          <div className="mb-2.5 flex items-center justify-between gap-3 sm:mb-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <UserBadge player={player} size="h-9 w-9 sm:h-10 sm:w-10" />
+                              <div className="min-w-0">
+                                <div className="truncate font-black">{player.name} {player.id === currentPlayer?.id && <span className="text-xs text-emerald-200">我</span>}</div>
+                                <div className="text-[11px] text-slate-500 sm:text-xs">积分差 {entry.pointsDiff} / 净胜球差 {entry.goalDifferenceDiff} / 进球差 {entry.goalsDiff}</div>
+                              </div>
+                            </div>
+                            {isWinner ? <CheckCircle2 className="h-4 w-4 text-emerald-200 sm:h-5 sm:w-5" /> : null}
+                          </div>
+                          <div className="space-y-1.5 text-xs sm:space-y-2 sm:text-sm">
+                            <InfoRow label="积分预测" value={formatSponsorPredictionValue(SPONSOR_PREDICTION_EVENT_BY_ID[CUT_LINE_MASTER_POINTS_EVENT_ID], pointsPrediction?.predictedValue)} />
+                            <InfoRow label="净胜球预测" value={formatSponsorPredictionValue(SPONSOR_PREDICTION_EVENT_BY_ID[CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID], goalDifferencePrediction?.predictedValue)} />
+                            <InfoRow label="进球预测" value={formatSponsorPredictionValue(SPONSOR_PREDICTION_EVENT_BY_ID[CUT_LINE_MASTER_GOALS_EVENT_ID], goalsPrediction?.predictedValue)} />
+                            {isWinner ? <div className="flex flex-wrap gap-1.5 pt-1"><Pill className="bg-yellow-500/15 text-yellow-200">{group.awardTitle}</Pill></div> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
@@ -3790,7 +3885,7 @@ function SponsorPredictionInputCard({ item, valueState, locked, onChange }) {
           <input value={valueState?.seconds || ""} disabled={locked} onChange={(event) => onChange({ ...valueState, seconds: event.target.value.replace(/[^\d]/g, "") })} placeholder="秒" className="md3-field py-2.5 text-center text-sm disabled:opacity-50" />
         </div>
       ) : (
-        <input value={valueState ?? ""} disabled={locked} onChange={(event) => onChange(event.target.value.replace(/[^\d]/g, ""))} placeholder={item.event.placeholder} className="md3-field py-2.5 text-center text-base font-black disabled:opacity-50" />
+        <input value={valueState ?? ""} disabled={locked} onChange={(event) => onChange(item.event.valueType === "signed_integer" ? event.target.value.replace(/[^\d-]/g, "").replace(/(?!^)-/g, "") : event.target.value.replace(/[^\d]/g, ""))} placeholder={item.event.placeholder} className="md3-field py-2.5 text-center text-base font-black disabled:opacity-50" />
       )}
       <div className="mt-2 text-[11px] leading-relaxed text-slate-500 sm:text-xs">{item.event.helperText}</div>
     </div>
@@ -4922,6 +5017,36 @@ function AsiaRound2StatusCard({ matches, sponsorPredictionResults }) {
   );
 }
 
+function CutLineMasterStatusCard({ matches, sponsorPredictionResults }) {
+  const stats = useMemo(() => calculateCutLineMasterStatsFromMatches(matches), [matches]);
+  const autoResults = useMemo(() => getAutomaticSponsorPredictionResults({ matches, sponsorPredictionResults }), [matches, sponsorPredictionResults]);
+
+  return (
+    <Card>
+      <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div>
+          <h3 className="text-xl font-black">卡线大师 · 自动统计状态</h3>
+          <p className="text-sm text-slate-400">系统会自动追踪 12 个小组第三中的第 8 名，也就是最后一个第三名晋级名额。</p>
+        </div>
+        <Pill className="bg-emerald-500/15 text-emerald-200">{stats.isComplete ? "已完整结算" : "自动计算中"}</Pill>
+      </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="md3-panel-inset px-4 py-3"><div className="text-xs text-slate-500">当前球队</div><div className="mt-1 text-2xl font-black">{stats.team || "--"}</div></div>
+        <div className="md3-panel-inset px-4 py-3"><div className="text-xs text-slate-500">当前积分</div><div className="mt-1 text-2xl font-black">{autoResults[CUT_LINE_MASTER_POINTS_EVENT_ID]?.actualValue ?? "--"}</div></div>
+        <div className="md3-panel-inset px-4 py-3"><div className="text-xs text-slate-500">当前净胜球</div><div className="mt-1 text-2xl font-black">{autoResults[CUT_LINE_MASTER_GOAL_DIFFERENCE_EVENT_ID]?.actualValue ?? "--"}</div></div>
+        <div className="md3-panel-inset px-4 py-3"><div className="text-xs text-slate-500">当前进球数</div><div className="mt-1 text-2xl font-black">{autoResults[CUT_LINE_MASTER_GOALS_EVENT_ID]?.actualValue ?? "--"}</div></div>
+      </div>
+      <div className="mt-4 rounded-[20px] border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-outline-variant) 56%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-surface-container-low) 84%, transparent)" }}>
+        <div className="text-sm font-black">当前最边缘第三名</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {stats.team ? <Pill>{`${stats.group} · ${stats.team} · ${stats.points ?? "--"}分 · 净胜球 ${stats.goalDifference ?? "--"} · 进球 ${stats.goalsFor ?? "--"}`}</Pill> : <span className="text-xs text-slate-500">还没有形成可比较的第 8 名第三名</span>}
+        </div>
+        <p className="mt-3 text-xs text-slate-500">截止时间：北京时间 2026/06/25 03:00。答案会随小组赛第三轮结算实时刷新。</p>
+      </div>
+    </Card>
+  );
+}
+
 function AdminPanel({ matches, players, currentPlayerId, predictions, updateMatchResult, clearMatchResult, toggleLock, funResults, onSetFunResults, sponsorPredictionResults, onSetSponsorPredictionResult, onSetUserCamp, onSetUserAdmin, onDeleteUser, openDialog }) {
   const [adminQuery, setAdminQuery] = useState("");
   const [adminFilter, setAdminFilter] = useState("ALL");
@@ -4937,6 +5062,7 @@ function AdminPanel({ matches, players, currentPlayerId, predictions, updateMatc
 
   return (
     <section className="mt-6 space-y-5">
+      <CutLineMasterStatusCard matches={matches} sponsorPredictionResults={sponsorPredictionResults} />
       <AsiaRound2StatusCard matches={matches} sponsorPredictionResults={sponsorPredictionResults} />
       <SponsorPredictionResultsCard matches={matches} sponsorPredictionResults={sponsorPredictionResults} onSetSponsorPredictionResult={onSetSponsorPredictionResult} />
       <FunResultsCard funResults={funResults} onSetFunResults={onSetFunResults} />
