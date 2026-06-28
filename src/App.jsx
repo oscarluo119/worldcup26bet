@@ -105,6 +105,21 @@ import {
 } from "./lib/sponsorPredictions";
 import { DEFAULT_WORLD_CUP_NEWS_IMAGE, FALLBACK_WORLD_CUP_NEWS, fetchWorldCupNews, isFallbackWorldCupNews } from "./lib/worldcupNews";
 import { normalizeUserFacingError } from "./lib/userFacingError";
+import {
+  CHAMPION_ROAD_DISPLAY_LANES,
+  CHAMPION_ROAD_MATCHES,
+  buildChampionRoadStandings,
+  getChampionRoadDesktopScale,
+  getChampionRoadLockAt,
+  isChampionRoadLocked,
+  normalizeChampionRoadPicks,
+  rankChampionRoadEntries,
+  resolveChampionRoadDisplayLabel,
+  resolveChampionRoadScheduleMatch,
+  resolveChampionRoadSlot,
+  scoreChampionRoadEntry,
+  validateChampionRoadSubmission,
+} from "./lib/championRoad";
 
 const WORLD_CUP_NEWS_CACHE_KEY = "worldcup-news-cache-v2";
 
@@ -748,6 +763,30 @@ function mapFunResults(row) {
     totalGoals: row.total_goals ?? "",
   };
 }
+
+function mapChampionRoadPredictions(predictionRows = [], itemRows = []) {
+  const itemsByPredictionId = itemRows.reduce((acc, row) => {
+    if (!acc[row.prediction_id]) acc[row.prediction_id] = {};
+    acc[row.prediction_id][row.match_no] = {
+      matchNo: row.match_no,
+      round: row.round,
+      pickSlot: row.pick_slot,
+      pickTarget: row.pick_target,
+    };
+    return acc;
+  }, {});
+
+  return predictionRows.reduce((acc, row) => {
+    acc[row.user_id] = {
+      id: row.id,
+      userId: row.user_id,
+      submittedAt: row.submitted_at,
+      lockedAt: row.locked_at,
+      picks: itemsByPredictionId[row.id] || {},
+    };
+    return acc;
+  }, {});
+}
 function getDisplayName(user, fallback = "未命名用户") {
   return user?.user_metadata?.username || user?.email?.split("@")[0] || fallback;
 }
@@ -759,6 +798,7 @@ const tabs = [
   { id: "completeSchedule", label: "完整赛程", icon: CalendarDays },
   { id: "worldCupStandings", label: "世界杯排名", icon: Medal },
   { id: "ranking", label: "竞猜排行榜", icon: Trophy },
+  { id: "championRoad", label: "冠军之路", icon: KeyRound },
   { id: "sponsorPredictions", label: "冠名预测", icon: Trophy },
   { id: "fun", label: "趣味预测", icon: Flame },
   { id: "achievements", label: "成就墙", icon: Crown },
@@ -1922,6 +1962,8 @@ export default function WorldCupPredictionMVP() {
   const [predictions, setPredictions] = useState([]);
   const [funPredictions, setFunPredictions] = useState({});
   const [funResults, setFunResults] = useState(emptyFunResults);
+  const [championRoadPredictions, setChampionRoadPredictions] = useState({});
+  const [championRoadDraftPicks, setChampionRoadDraftPicks] = useState({});
   const [sponsorPredictions, setSponsorPredictions] = useState(emptySponsorPredictions);
   const [sponsorPredictionResults, setSponsorPredictionResults] = useState(emptySponsorPredictionResults);
   const [worldCupResults, setWorldCupResults] = useState({});
@@ -2070,6 +2112,8 @@ export default function WorldCupPredictionMVP() {
       profilesResult,
       predictionsResult,
       funPredictionsResult,
+      championRoadPredictionsResult,
+      championRoadPredictionItemsResult,
       sponsorPredictionsResult,
       matchOverridesResult,
       liveMatchStatesResult,
@@ -2080,6 +2124,8 @@ export default function WorldCupPredictionMVP() {
       supabase.from("profiles").select("*").order("joined_at", { ascending: true }),
       predictionsPromise,
       supabase.from("fun_predictions").select("*"),
+      supabase.from("champion_road_predictions").select("*"),
+      supabase.from("champion_road_prediction_items").select("*"),
       supabase.from("sponsor_predictions").select("*"),
       supabase.from("match_overrides").select("*"),
       supabase.from("live_match_states").select("*"),
@@ -2092,6 +2138,8 @@ export default function WorldCupPredictionMVP() {
       profilesResult,
       predictionsResult,
       funPredictionsResult,
+      championRoadPredictionsResult,
+      championRoadPredictionItemsResult,
       sponsorPredictionsResult,
       matchOverridesResult,
       liveMatchStatesResult,
@@ -2108,6 +2156,7 @@ export default function WorldCupPredictionMVP() {
     setPlayers((profilesResult.data || []).map(mapProfile));
     setPredictions((predictionsResult.data || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
     setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
+    setChampionRoadPredictions(mapChampionRoadPredictions(championRoadPredictionsResult.data || [], championRoadPredictionItemsResult.data || []));
     setSponsorPredictions(mapSponsorPredictions(sponsorPredictionsResult.data || []));
     setCompleteSchedule(hydratedMatches);
     setMatches(hydratedMatches);
@@ -2128,6 +2177,8 @@ export default function WorldCupPredictionMVP() {
         setPlayers([]);
         setPredictions([]);
         setFunPredictions({});
+        setChampionRoadPredictions({});
+        setChampionRoadDraftPicks({});
         setSponsorPredictions(emptySponsorPredictions);
         setSponsorPredictionResults(emptySponsorPredictionResults);
         setCompleteSchedule(FALLBACK_COMPLETE_WORLD_CUP_SCHEDULE);
@@ -2283,17 +2334,61 @@ export default function WorldCupPredictionMVP() {
   }), [players, currentPlayerId, predictions, matches, funPredictions, funResults]);
 
   const myStats = rankings.find((p) => p.id === currentPlayerId);
-  const filteredMatches = useMemo(() => matches.filter((match) => {
-    const text = `${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${STAGES[match.stage]?.label || ""}`.toLowerCase();
+  const championRoadStandings = useMemo(() => buildChampionRoadStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
+  const resolvedMatches = useMemo(() => matches.map((match) => {
+    const matchDisplay = resolveChampionRoadScheduleMatch(match, { standings: championRoadStandings, results: worldCupResults });
+    return {
+      ...match,
+      home: matchDisplay.resolvedHomeName,
+      away: matchDisplay.resolvedAwayName,
+      searchAliases: matchDisplay.searchAliases,
+      homeResolved: matchDisplay.homeResolved,
+      awayResolved: matchDisplay.awayResolved,
+    };
+  }), [matches, championRoadStandings, worldCupResults]);
+  const resolvedCompleteSchedule = useMemo(() => completeSchedule.map((match) => {
+    const matchDisplay = resolveChampionRoadScheduleMatch(match, { standings: championRoadStandings, results: worldCupResults });
+    return {
+      ...match,
+      home: matchDisplay.resolvedHomeName,
+      away: matchDisplay.resolvedAwayName,
+      searchAliases: matchDisplay.searchAliases,
+      homeResolved: matchDisplay.homeResolved,
+      awayResolved: matchDisplay.awayResolved,
+    };
+  }), [completeSchedule, championRoadStandings, worldCupResults]);
+  const filteredMatches = useMemo(() => resolvedMatches.filter((match) => {
+    const text = `${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${STAGES[match.stage]?.label || ""}${(match.searchAliases || []).join("")}`.toLowerCase();
     return text.includes(query.toLowerCase()) && (stageFilter === "ALL" || match.stage === stageFilter);
-  }), [matches, query, stageFilter]);
+  }), [resolvedMatches, query, stageFilter]);
   const scheduleVisibleMatches = useMemo(() => filterVisibleScheduleMatches(filteredMatches, currentTime, 1), [filteredMatches, currentTime]);
   const groupedMatches = groupByDate(scheduleVisibleMatches);
   const unPredictedCount = matches.filter((match) => !predictions.some((p) => p.playerId === currentPlayerId && p.matchId === match.id)).length;
   const settledCount = matches.filter(isSettledMatch).length;
   const worldCupStandings = useMemo(() => buildWorldCupStandings(completeSchedule, worldCupResults), [completeSchedule, worldCupResults]);
   const worldCupSettledCount = useMemo(() => Object.values(worldCupResults).filter(isWorldCupResultSettled).length, [worldCupResults]);
-  const worldCupTeamCardMatches = useMemo(() => buildWorldCupTeamCardMatches(completeSchedule, worldCupResults, matches), [completeSchedule, worldCupResults, matches]);
+  const worldCupTeamCardMatches = useMemo(() => buildWorldCupTeamCardMatches(resolvedCompleteSchedule, worldCupResults, resolvedMatches), [resolvedCompleteSchedule, worldCupResults, resolvedMatches]);
+  const championRoadLockAt = useMemo(() => getChampionRoadLockAt(CHAMPION_ROAD_MATCHES), []);
+  const championRoadLocked = useMemo(() => isChampionRoadLocked(CHAMPION_ROAD_MATCHES, currentTime), [currentTime]);
+  const currentChampionRoadPrediction = championRoadPredictions[currentPlayerId] || null;
+  const championRoadSavedPicks = currentChampionRoadPrediction?.picks || {};
+  const championRoadValidation = useMemo(() => validateChampionRoadSubmission({ picks: championRoadDraftPicks }), [championRoadDraftPicks]);
+  const championRoadRankings = useMemo(() => rankChampionRoadEntries(
+    players
+      .map((player) => {
+        const prediction = championRoadPredictions[player.id];
+        if (!prediction) return null;
+        return {
+          userId: player.id,
+          playerName: player.name,
+          submittedAt: prediction.submittedAt,
+          score: scoreChampionRoadEntry(prediction.picks, worldCupResults),
+        };
+      })
+      .filter(Boolean),
+  ), [players, championRoadPredictions, worldCupResults]);
+  const currentChampionRoadRanking = championRoadRankings.find((entry) => entry.userId === currentPlayerId) || null;
+  const currentChampionRoadScore = currentChampionRoadPrediction ? scoreChampionRoadEntry(currentChampionRoadPrediction.picks, worldCupResults) : null;
   const campBattleSummary = useMemo(() => buildCampBattleSummary(rankings, matches, predictions), [rankings, matches, predictions]);
   const nextOpenMatch = useMemo(
     () => [...matches].filter((match) => !isMatchLocked(match, currentTime)).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())[0],
@@ -2306,6 +2401,10 @@ export default function WorldCupPredictionMVP() {
       return scheduleVisibleMatches.some((match) => match.id === prev) ? prev : "";
     });
   }, [scheduleVisibleMatches]);
+
+  React.useEffect(() => {
+    setChampionRoadDraftPicks(currentChampionRoadPrediction?.picks || {});
+  }, [currentPlayerId, currentChampionRoadPrediction?.id]);
 
   async function upsertPrediction(matchId, home, away) {
     const match = matches.find((m) => m.id === matchId);
@@ -2405,6 +2504,65 @@ export default function WorldCupPredictionMVP() {
     }
     setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, status: nextStatus } : m));
     openSnackbar(nextStatus === "closed" ? "比赛已锁定" : "比赛已重新开放");
+  }
+
+  async function saveChampionRoadPrediction() {
+    if (!currentPlayerId || championRoadLocked) return;
+    if (!championRoadValidation.valid) {
+      openSnackbar("请先完整选出整条冠军之路");
+      return;
+    }
+
+    const submittedAt = new Date().toISOString();
+    const normalizedPicks = championRoadValidation.picks;
+    const { data: savedPrediction, error: predictionError } = await supabase
+      .from("champion_road_predictions")
+      .upsert({
+        user_id: currentPlayerId,
+        submitted_at: submittedAt,
+        locked_at: championRoadLockAt,
+      }, { onConflict: "user_id" })
+      .select("*")
+      .single();
+
+    if (predictionError || !savedPrediction) {
+      showUserError(predictionError, "champion_road_save");
+      return;
+    }
+
+    const predictionId = savedPrediction.id;
+    const items = Object.values(normalizedPicks).map((item) => ({
+      prediction_id: predictionId,
+      round: item.round || CHAMPION_ROAD_MATCHES.find((match) => match.matchNo === item.matchNo)?.round || "",
+      match_no: item.matchNo,
+      pick_slot: item.pickSlot,
+      pick_target: item.pickTarget,
+    }));
+
+    const { error: deleteError } = await supabase.from("champion_road_prediction_items").delete().eq("prediction_id", predictionId);
+    if (deleteError) {
+      showUserError(deleteError, "champion_road_save");
+      return;
+    }
+
+    const { error: itemError } = await supabase.from("champion_road_prediction_items").insert(items);
+    if (itemError) {
+      showUserError(itemError, "champion_road_save");
+      return;
+    }
+
+    setChampionRoadPredictions((prev) => ({
+      ...prev,
+      [currentPlayerId]: {
+        id: predictionId,
+        userId: currentPlayerId,
+        submittedAt,
+        lockedAt: championRoadLockAt,
+        picks: normalizedPicks,
+      },
+    }));
+    setChampionRoadDraftPicks(normalizedPicks);
+    openSnackbar("冠军之路已保存");
   }
 
   async function saveFunPrediction(champion, goldenBoot, firstRedCardTeam, totalGoals) {
@@ -2630,11 +2788,12 @@ export default function WorldCupPredictionMVP() {
         />
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
-          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} />}
+          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} standings={championRoadStandings} worldCupResults={worldCupResults} />}
           {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
-          {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={completeSchedule} source={scheduleSource} matches={matches} />}
+          {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={resolvedCompleteSchedule} source={scheduleSource} matches={worldCupTeamCardMatches} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} matches={worldCupTeamCardMatches} />}
-          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} matches={matches} />}
+          {activeTab === "championRoad" && <ChampionRoadPanel currentPlayer={currentPlayer} currentTime={currentTime} players={players} standings={championRoadStandings} worldCupResults={worldCupResults} savedPrediction={currentChampionRoadPrediction} draftPicks={championRoadDraftPicks} onChangeDraftPicks={setChampionRoadDraftPicks} onSubmit={saveChampionRoadPrediction} locked={championRoadLocked} lockAt={championRoadLockAt} score={currentChampionRoadScore} ranking={currentChampionRoadRanking} rankings={championRoadRankings} />}
+          {activeTab === "schedule" && <SchedulePanel predictions={predictions} currentPlayerId={currentPlayerId} query={query} setQuery={setQuery} stageFilter={stageFilter} setStageFilter={setStageFilter} groupedMatches={groupedMatches} selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} upsertPrediction={upsertPrediction} players={players} currentTime={currentTime} onOpenPlayerProfile={openPlayerProfile} openSnackbar={openSnackbar} isAdmin={isAdmin} matches={worldCupTeamCardMatches} />}
           {activeTab === "playerProfile" && <PlayerProfilePanel player={profilePlayer} currentPlayerId={currentPlayerId} players={players} rankings={rankings} predictions={predictions} matches={matches} streakRankings={streakRankings} predictionStyleRankings={predictionStyleRankings} reverseLightPlayer={reverseLightPlayer} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={resolvedSponsorPredictionResults} funPredictions={funPredictions} funResults={funResults} achievementCollections={achievementCollections} campBattleSummary={campBattleSummary} themeMode={themeMode} onChangeTheme={setThemeMode} onUpdateProfile={updateProfile} onBack={() => setActiveTab("ranking")} onOpenAchievements={() => setActiveTab("achievements")} onOpenFullHistory={(playerId) => { setSelectedProfilePlayerId(playerId); setActiveTab("allHistory"); }} />}
           {activeTab === "allHistory" && <AllHistoryPanel player={profilePlayer} predictions={predictions} matches={matches} onBack={() => setActiveTab("playerProfile")} />}
           {activeTab === "sponsorPredictions" && <SponsorPredictionPanel currentPlayer={currentPlayer} players={players} matches={matches} sponsorPredictions={sponsorPredictions} sponsorPredictionResults={resolvedSponsorPredictionResults} onSave={saveSponsorPrediction} firstKickoff={firstKickoff} />}
@@ -2663,11 +2822,20 @@ export default function WorldCupPredictionMVP() {
   );
 }
 
-function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections, worldCupNews, newsLoading, onOpenNews }) {
+function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections, worldCupNews, newsLoading, onOpenNews, standings, worldCupResults }) {
   const sortedMatches = [...matches].sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const todayMatches = sortedMatches.filter((match) => isSameBeijingDate(match.kickoff, currentTime));
   const soonLockMatches = sortedMatches.filter((match) => !isMatchLocked(match, currentTime)).slice(0, 4);
   const nextDeadline = soonLockMatches[0];
+  const resolvedNextDeadline = useMemo(() => {
+    if (!nextDeadline) return null;
+    const matchDisplay = resolveChampionRoadScheduleMatch(nextDeadline, { standings, results: worldCupResults });
+    return {
+      ...nextDeadline,
+      home: matchDisplay.resolvedHomeName,
+      away: matchDisplay.resolvedAwayName,
+    };
+  }, [nextDeadline, standings, worldCupResults]);
   const myAchievementItems = achievementCollections?.currentPlayerItems || [];
   const recentAchievements = [...myAchievementItems]
     .filter((item) => item.currentPlayerProgress.achieved)
@@ -2676,7 +2844,7 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
   const rankingIndex = rankings.findIndex((player) => player.id === currentPlayerId) + 1;
   const stageMeta = nextDeadline ? (STAGES[nextDeadline.stage] || STAGES.GROUP) : (STAGES.GROUP);
   const nextDeadlineValue = nextDeadline ? `${formatDateOnly(nextDeadline.kickoff).replace("星期", "周")} ${formatBeijingTime(nextDeadline.kickoff)}` : "--";
-  const nextDeadlineOpponent = nextDeadline ? `${teamName(nextDeadline.home)} vs ${teamName(nextDeadline.away)}` : "当前暂无可竞猜比赛";
+  const nextDeadlineOpponent = resolvedNextDeadline ? `${teamName(resolvedNextDeadline.home)} vs ${teamName(resolvedNextDeadline.away)}` : "当前暂无可竞猜比赛";
 
   function openMatch(matchId) {
     setSelectedMatchId(matchId);
@@ -2701,9 +2869,9 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
           </div>
           <M3Button tone="outline" className="px-3 py-2 text-xs sm:text-sm" onClick={() => setActiveTab("schedule")}>全部赛程</M3Button>
         </div>
-        {nextDeadline ? (
+        {resolvedNextDeadline ? (
           <MatchFeatureCard
-            match={nextDeadline}
+            match={resolvedNextDeadline}
             pred={predictions.find((prediction) => prediction.playerId === currentPlayerId && prediction.matchId === nextDeadline.id)}
             now={currentTime}
             onClick={() => openMatch(nextDeadline.id)}
@@ -2776,6 +2944,7 @@ function AllFeaturesPanel({ currentPlayerId, isAdmin, setActiveTab, setSelectedP
     { id: "playerProfile", label: "个人主页", icon: Users, description: "管理我的资料与历史表现" },
     { id: "completeSchedule", label: "完整赛程", icon: CalendarDays, description: "按时间查看完整世界杯赛程" },
     { id: "worldCupStandings", label: "世界杯排名", icon: Medal, description: "查看各组积分榜与晋级形势" },
+    { id: "championRoad", label: "冠军之路", icon: KeyRound, description: "提交整条淘汰赛晋级路线并参与独立榜单" },
     { id: "sponsorPredictions", label: "冠名预测", icon: Trophy, description: "参与首球时间等冠名称号玩法" },
     { id: "fun", label: "趣味预测", icon: Flame, description: "提交冠军、金靴和总进球趣味竞猜" },
     { id: "rules", label: "规则", icon: ShieldCheck, description: "查看积分、锁盘与结算规则" },
@@ -3146,7 +3315,7 @@ function FullScheduleCalendar({ schedule, source, matches = [] }) {
   const [scheduleQuery, setScheduleQuery] = useState("");
   const [scheduleStage, setScheduleStage] = useState("ALL");
   const filteredSchedule = useMemo(() => schedule.filter((match) => {
-    const text = `${match.no}${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${match.stadium}${match.city}${match.location}${match.stadiumRaw || ""}${match.cityRaw || ""}${match.locationRaw || ""}`.toLowerCase();
+    const text = `${match.no}${match.home}${match.away}${match.homeRaw || ""}${match.awayRaw || ""}${match.group}${match.stadium}${match.city}${match.location}${match.stadiumRaw || ""}${match.cityRaw || ""}${match.locationRaw || ""}${(match.searchAliases || []).join("")}`.toLowerCase();
     return text.includes(scheduleQuery.toLowerCase()) && (scheduleStage === "ALL" || match.group === scheduleStage);
   }), [schedule, scheduleQuery, scheduleStage]);
   const scheduleByDate = useMemo(() => filteredSchedule.reduce((acc, match) => {
@@ -3503,6 +3672,361 @@ const PredictionExportCard = React.forwardRef(function PredictionExportCard({ ma
 
 function ScoreInput({ label, value, disabled, onChange }) {
   return <div><div className="mb-2 truncate text-center text-sm md3-subtle">{label}</div><input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, Number(e.target.value)))} className="md3-field w-full px-4 py-4 text-center text-3xl font-black disabled:opacity-50" /></div>;
+}
+
+function championRoadSourceIdToLabel(sourceId) {
+  const [type, first, second] = String(sourceId || "").split(":");
+  if (type === "group") return `${first}组${second === "1" ? "第一" : (second === "2" ? "第二" : "第三")}`;
+  if (type === "bestThird") return `最佳小组第三（${first}）`;
+  if (type === "winner") return `第${first}场胜者`;
+  if (type === "loser") return `第${first}场负者`;
+  return String(sourceId || "");
+}
+
+function formatChampionRoadCountdown(lockAt, now) {
+  const diff = new Date(lockAt).getTime() - new Date(now).getTime();
+  if (diff <= 0) return "已锁定";
+  const totalMinutes = Math.floor(diff / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}天 ${hours}小时 ${minutes}分钟`;
+  if (hours > 0) return `${hours}小时 ${minutes}分钟`;
+  return `${minutes}分钟`;
+}
+
+function getChampionRoadPredictedSourceTarget(sourceId, picks) {
+  if (!sourceId) return "";
+  if (sourceId.startsWith("winner:")) {
+    const matchNo = Number(sourceId.split(":")[1]);
+    return picks[matchNo]?.pickTarget || "";
+  }
+  if (sourceId.startsWith("loser:")) {
+    const matchNo = Number(sourceId.split(":")[1]);
+    const match = CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo);
+    if (!match) return "";
+    const home = getChampionRoadPredictedSourceTarget(match.homeSourceId, picks);
+    const away = getChampionRoadPredictedSourceTarget(match.awaySourceId, picks);
+    const winner = picks[matchNo]?.pickTarget || "";
+    return [home, away].find((target) => target && target !== winner) || "";
+  }
+  return sourceId;
+}
+
+function getChampionRoadSourceDisplay(sourceId, standings, worldCupResults) {
+  if (!sourceId) return { resolved: false, teamName: "", placeholderName: "席位待定", targetSourceId: "", flag: { type: "emoji", emoji: "❓", alt: "待定" } };
+  const slot = resolveChampionRoadDisplayLabel(championRoadSourceIdToLabel(sourceId), { standings, results: worldCupResults });
+  const flag = slot.resolved
+    ? getFlagRenderData({ teamName: slot.teamName, fallbackEmoji: TEAM_FLAGS[slot.teamName] || "" })
+    : { type: "emoji", emoji: "❓", alt: slot.placeholderName };
+  return { ...slot, targetSourceId: sourceId, flag };
+}
+
+function getChampionRoadMatchDisplay(match, picks, standings, worldCupResults) {
+  const resolveSide = (sourceId, fallbackLabel) => {
+    const predictedSourceId = getChampionRoadPredictedSourceTarget(sourceId, picks);
+    if (predictedSourceId) return getChampionRoadSourceDisplay(predictedSourceId, standings, worldCupResults);
+    return {
+      resolved: false,
+      teamName: "",
+      placeholderName: fallbackLabel.replace("最佳小组第三", "最佳第三"),
+      targetSourceId: "",
+      flag: { type: "emoji", emoji: "❓", alt: fallbackLabel },
+    };
+  };
+
+  const home = resolveSide(match.homeSourceId, match.homeLabel);
+  const away = resolveSide(match.awaySourceId, match.awayLabel);
+  const selectedTarget = picks[match.matchNo]?.pickTarget || "";
+  return { home, away, selectedTarget };
+}
+
+function ChampionRoadFlag({ flag, teamName }) {
+  if (flag?.type === "image") return <img src={flag.src} alt={flag.alt} className="h-4 w-6 rounded-sm object-cover xl:h-5 xl:w-7" loading="lazy" />;
+  return <span className="inline-flex h-4 w-6 items-center justify-center text-xs xl:h-5 xl:w-7 xl:text-sm">{flag?.emoji || TEAM_FLAGS[teamName] || "❓"}</span>;
+}
+
+function ChampionRoadPickCard({ side, active, disabled, onClick }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled || !side.targetSourceId}
+      onClick={onClick}
+      className={cn(
+        "w-full rounded-[18px] px-2.5 py-2.5 text-left transition xl:rounded-[20px] xl:px-3 xl:py-3",
+        active ? "bg-emerald-500/18 text-white shadow-[0_0_0_1px_rgba(110,231,183,0.35)]" : "bg-white/8 text-slate-100 hover:bg-white/12",
+        (disabled || !side.targetSourceId) ? "cursor-default opacity-70" : "",
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <ChampionRoadFlag flag={side.flag} teamName={side.teamName} />
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-black leading-4 xl:text-sm">{side.teamName || side.placeholderName}</div>
+            <div className="mt-0.5 truncate text-[10px] text-slate-400 xl:text-[11px]">{side.resolved ? "席位已确定" : "席位待定"}</div>
+          </div>
+        </div>
+        <div className={cn("h-3 w-3 rounded-full border border-white/20 xl:h-3.5 xl:w-3.5", active ? "bg-emerald-300" : "bg-transparent")} />
+      </div>
+    </button>
+  );
+}
+
+function ChampionRoadMatchNode({ match, picks, standings, worldCupResults, locked, onPick }) {
+  const display = getChampionRoadMatchDisplay(match, picks, standings, worldCupResults);
+  return (
+    <div className="space-y-2">
+      <ChampionRoadPickCard side={display.home} active={display.selectedTarget === display.home.targetSourceId} disabled={locked} onClick={() => onPick(match, "home", display.home.targetSourceId)} />
+      <ChampionRoadPickCard side={display.away} active={display.selectedTarget === display.away.targetSourceId} disabled={locked} onClick={() => onPick(match, "away", display.away.targetSourceId)} />
+    </div>
+  );
+}
+
+function chunkChampionRoadMatches(matchNos = [], groupSize = 2) {
+  return matchNos.reduce((groups, matchNo, index) => {
+    if (index % groupSize === 0) groups.push([]);
+    groups.at(-1)?.push(matchNo);
+    return groups;
+  }, []);
+}
+
+function ChampionRoadScoreCard({ title, stats }) {
+  const totalHits = title === "最终名次" ? 4 : Number(title.replace("强", ""));
+  return (
+    <div className="rounded-[22px] bg-white/8 p-4 min-w-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base font-black text-white xl:text-lg">{title}</div>
+          <div className="mt-1 text-sm text-emerald-100/85">{stats?.hits || 0} / {totalHits}</div>
+        </div>
+      </div>
+      <div className="mt-3 h-2.5 rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-emerald-300" style={{ width: `${Math.max(0, Math.min(100, ((stats?.points || 0) / Math.max(stats?.maxPoints || 1, 1)) * 100))}%` }} />
+      </div>
+      <div className="mt-3 text-sm text-slate-300">{stats?.points || 0} 分 / {stats?.maxPoints || 0} 分</div>
+    </div>
+  );
+}
+
+function ChampionRoadPanel({ currentPlayer, currentTime, players, standings, worldCupResults, savedPrediction, draftPicks, onChangeDraftPicks, onSubmit, locked, lockAt, score, ranking, rankings }) {
+  const desktopRounds = CHAMPION_ROAD_DISPLAY_LANES;
+  const desktopFrameRef = useRef(null);
+  const desktopGridRef = useRef(null);
+  const [desktopScale, setDesktopScale] = useState(1);
+  const [desktopContentWidth, setDesktopContentWidth] = useState(1560);
+  const [desktopContentHeight, setDesktopContentHeight] = useState(930);
+  const left32Groups = chunkChampionRoadMatches(desktopRounds.left32);
+  const right32Groups = chunkChampionRoadMatches(desktopRounds.right32);
+
+  React.useEffect(() => {
+    const updateScale = () => {
+      const frame = desktopFrameRef.current;
+      const grid = desktopGridRef.current;
+      const nextWidth = frame?.clientWidth || 0;
+      const rect = frame?.getBoundingClientRect?.();
+      const availableHeight = rect ? window.innerHeight - rect.top - 24 : 0;
+      const nextContentWidth = Math.max(grid?.scrollWidth || 0, 1560);
+      const nextHeight = Math.max(grid?.scrollHeight || 0, 930);
+      setDesktopContentWidth(nextContentWidth);
+      setDesktopContentHeight(nextHeight);
+      setDesktopScale(getChampionRoadDesktopScale({
+        availableWidth: nextWidth - 24,
+        availableHeight,
+        contentWidth: nextContentWidth,
+        contentHeight: nextHeight,
+      }));
+    };
+
+    updateScale();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateScale);
+      return () => window.removeEventListener("resize", updateScale);
+    }
+
+    const observer = new ResizeObserver(() => updateScale());
+    if (desktopFrameRef.current) observer.observe(desktopFrameRef.current);
+    window.addEventListener("resize", updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateScale);
+    };
+  }, []);
+
+  const handlePick = (match, pickSlot, pickTarget) => {
+    if (locked || !pickTarget) return;
+    onChangeDraftPicks((prev) => normalizeChampionRoadPicks({
+      picks: {
+        ...prev,
+        [match.matchNo]: {
+          matchNo: match.matchNo,
+          round: match.round,
+          pickSlot,
+          pickTarget,
+        },
+      },
+    }));
+  };
+
+  const currentScore = score?.breakdown || {
+    round16: { hits: 0, points: 0, maxPoints: 16 },
+    quarterfinals: { hits: 0, points: 0, maxPoints: 16 },
+    semifinals: { hits: 0, points: 0, maxPoints: 16 },
+    placements: { hits: 0, points: 0, maxPoints: 18 },
+  };
+  const mobileRoundOrder = {
+    "32强赛": [...desktopRounds.left32, ...desktopRounds.right32],
+    "16强赛": [...desktopRounds.left16, ...desktopRounds.right16],
+    "8强赛": [...desktopRounds.left8, ...desktopRounds.right8],
+    "4强赛": [...desktopRounds.left4, ...desktopRounds.right4],
+    "决赛": [104],
+    "三四名决赛": [103],
+  };
+
+  const mySubmittedAt = savedPrediction?.submittedAt ? formatDateTime(savedPrediction.submittedAt) : "--";
+
+  return (
+    <section className="mt-6 space-y-5">
+      <div className="overflow-hidden rounded-[32px]">
+        <div className="p-4 sm:p-5" style={{ background: "linear-gradient(180deg, rgba(8,19,28,0.98), rgba(8,19,28,0.98)), linear-gradient(0deg, rgba(17,94,89,0.12), rgba(17,94,89,0.05))" }}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <Pill className="mb-3 bg-white/10 text-emerald-100"><KeyRound className="h-3.5 w-3.5" /> 淘汰赛独立玩法</Pill>
+              <h2 className="text-[1.5rem] font-black tracking-tight text-white sm:text-3xl">冠军之路</h2>
+              <p className="mt-2 text-sm text-slate-300">在 32 强赛首战开赛前，一次性选完整条淘汰赛路线。</p>
+            </div>
+            <DarkButton disabled={locked} onClick={onSubmit} className="px-5 py-3 text-sm font-black">{locked ? "冠军之路已锁定" : "提交冠军之路"}</DarkButton>
+          </div>
+
+          <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-[20px] bg-white/6 px-4 py-3"><div className="text-[11px] font-bold text-slate-400">提交状态</div><div className="mt-1.5 text-base font-black text-white xl:text-lg">{savedPrediction ? "已提交" : "未提交"}</div></div>
+            <div className="rounded-[20px] bg-white/6 px-4 py-3"><div className="text-[11px] font-bold text-slate-400">我的提交时间</div><div className="mt-1.5 text-base font-black text-white xl:text-lg">{mySubmittedAt}</div></div>
+            <div className="rounded-[20px] bg-white/6 px-4 py-3"><div className="text-[11px] font-bold text-slate-400">锁定倒计时</div><div className="mt-1.5 text-base font-black text-white xl:text-lg">{formatChampionRoadCountdown(lockAt, currentTime)}</div></div>
+            <div className="rounded-[20px] bg-white/6 px-4 py-3"><div className="text-[11px] font-bold text-slate-400">当前积分</div><div className="mt-1.5 text-base font-black text-white xl:text-lg">{ranking?.score?.total ?? 0}</div></div>
+            <div className="rounded-[20px] bg-white/6 px-4 py-3"><div className="text-[11px] font-bold text-slate-400">当前排名</div><div className="mt-1.5 text-base font-black text-white xl:text-lg">{ranking ? `#${ranking.rank}` : "--"}</div></div>
+          </div>
+
+          <div ref={desktopFrameRef} className="mt-5 hidden overflow-hidden xl:block">
+            <div
+              className="mx-auto"
+              style={{
+                width: `${Math.round(desktopContentWidth * desktopScale)}px`,
+                height: `${Math.round(desktopContentHeight * desktopScale)}px`,
+              }}
+            >
+              <div
+                ref={desktopGridRef}
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: "1fr 0.84fr 0.64fr 0.58fr 0.82fr 0.58fr 0.64fr 0.84fr 1fr",
+                  transform: `scale(${desktopScale})`,
+                  transformOrigin: "top left",
+                  width: `${desktopContentWidth}px`,
+                }}
+              >
+                <div>
+                  <div className="px-2 text-center text-sm font-black text-sky-200">32强赛</div>
+                  <div className="mt-3 space-y-5">
+                    {left32Groups.map((group, groupIndex) => <div key={`left32-${groupIndex}`} className="space-y-3">{group.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>)}
+                  </div>
+                </div>
+                <div className="space-y-7 pt-12"><div className="px-2 text-center text-sm font-black text-sky-200">16强赛</div>{desktopRounds.left16.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div className="space-y-24 pt-28"><div className="px-2 text-center text-sm font-black text-sky-200">8强赛</div>{desktopRounds.left8.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div className="pt-44"><div className="px-2 text-center text-sm font-black text-sky-200">4强赛</div>{desktopRounds.left4.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div className="pt-16">
+                  <div className="space-y-6 rounded-[28px] bg-white/[0.04] px-4 py-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <div className="text-center">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-100/65">中心主轴</div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="px-2 text-center text-sm font-black text-sky-200">决赛</div>
+                      <div className="space-y-3">{desktopRounds.final.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                    </div>
+                    <div className="space-y-3 pt-6">
+                      <div className="px-2 text-center text-xs font-black text-slate-300">三四名决赛</div>
+                      <div className="mx-auto max-w-[88%] space-y-3">{desktopRounds.thirdPlace.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-44"><div className="px-2 text-center text-sm font-black text-sky-200">4强赛</div>{desktopRounds.right4.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div className="space-y-24 pt-28"><div className="px-2 text-center text-sm font-black text-sky-200">8强赛</div>{desktopRounds.right8.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div className="space-y-7 pt-12"><div className="px-2 text-center text-sm font-black text-sky-200">16强赛</div>{desktopRounds.right16.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                <div>
+                  <div className="px-2 text-center text-sm font-black text-sky-200">32强赛</div>
+                  <div className="mt-3 space-y-5">
+                    {right32Groups.map((group, groupIndex) => <div key={`right32-${groupIndex}`} className="space-y-3">{group.map((matchNo) => <ChampionRoadMatchNode key={matchNo} match={CHAMPION_ROAD_MATCHES.find((item) => item.matchNo === matchNo)} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4 xl:hidden">
+            {["32强赛", "16强赛", "8强赛", "4强赛", "决赛", "三四名决赛"].map((label) => {
+              const items = (mobileRoundOrder[label] || []).map((matchNo) => CHAMPION_ROAD_MATCHES.find((match) => match.matchNo === matchNo)).filter(Boolean);
+              if (!items.length) return null;
+              return (
+                <div key={label}>
+                  <div className="mb-2 text-sm font-black text-sky-200">{label}</div>
+                  <div className="space-y-3">{items.map((match) => <ChampionRoadMatchNode key={match.matchNo} match={match} picks={draftPicks} standings={standings} worldCupResults={worldCupResults} locked={locked} onPick={handlePick} />)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+        <Card className="!p-4 sm:!p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-black">分数结构</h3>
+              <p className="mt-1 text-sm text-slate-400">前面是命中几分之几，下面是当前得分 / 该阶段满分。</p>
+            </div>
+            <Pill>{savedPrediction ? "按已提交结果计分" : "提交后开始计分"}</Pill>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <ChampionRoadScoreCard title="16强" stats={currentScore.round16} />
+            <ChampionRoadScoreCard title="8强" stats={currentScore.quarterfinals} />
+            <ChampionRoadScoreCard title="4强" stats={currentScore.semifinals} />
+            <ChampionRoadScoreCard title="最终名次" stats={currentScore.placements} />
+          </div>
+        </Card>
+
+        <Card className="!p-4 sm:!p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-black">排行榜</h3>
+              <p className="mt-1 text-sm text-slate-400">只展示冠军之路独立积分，不公开完整路线。</p>
+            </div>
+            <Pill>{rankings.length} 人已提交</Pill>
+          </div>
+          <div className="overflow-hidden rounded-[24px] border md3-divider">
+            <table className="w-full text-left text-sm">
+              <thead style={{ background: "color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, transparent)" }}>
+                <tr>
+                  <th className="px-4 py-3">排名</th>
+                  <th className="px-4 py-3">玩家</th>
+                  <th className="px-4 py-3">积分</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rankings.length ? rankings.map((entry) => {
+                  const isMe = entry.userId === currentPlayer?.id;
+                  return (
+                    <tr key={entry.userId} className={cn("border-t md3-divider", isMe ? "bg-emerald-500/8" : "")}>
+                      <td className="px-4 py-3 font-black">#{entry.rank}</td>
+                      <td className="px-4 py-3 font-black">{entry.playerName}{isMe ? <span className="ml-2 text-xs text-emerald-200">我</span> : null}</td>
+                      <td className="px-4 py-3 font-black">{entry.score.total}</td>
+                    </tr>
+                  );
+                }) : <tr><td colSpan="3" className="px-4 py-8 text-center text-sm text-slate-500">还没有人提交冠军之路</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    </section>
+  );
 }
 
 function SponsorPredictionPanel({ currentPlayer, players, matches, sponsorPredictions, sponsorPredictionResults, onSave, firstKickoff }) {
