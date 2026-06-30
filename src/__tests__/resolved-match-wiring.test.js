@@ -13,7 +13,7 @@ describe("resolved knockout match wiring", () => {
   test("feeds the admin page from resolved matches while keeping match actions on the same records", () => {
     expect(appSource).toContain('<AdminPanel matches={resolvedMatches} players={players} currentPlayerId={currentPlayerId} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={resolvedSponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} onDeleteUser={deleteUser} openDialog={openDialog} />');
     expect(appSource).not.toContain('<AdminPanel matches={matches} players={players} currentPlayerId={currentPlayerId} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={resolvedSponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} onDeleteUser={deleteUser} openDialog={openDialog} />');
-    expect(appSource).toContain('onResult(match.id, Number(homeScore), Number(awayScore))');
+    expect(appSource).toContain('onResult(match.id, Number(homeScore), Number(awayScore), requiresAdvancingSide ? advancingSide : null)');
     expect(appSource).toContain('onConfirm: () => onToggleLock(match.id)');
     expect(appSource).toContain('onConfirm: () => onClear(match.id)');
   });

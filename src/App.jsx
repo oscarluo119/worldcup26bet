@@ -663,6 +663,7 @@ function getFallbackMatches() {
     status: "open",
     homeScore: null,
     awayScore: null,
+    advancingSide: null,
   }));
 }
 
@@ -712,13 +713,18 @@ function mergeMatchOverrides(rows, baseMatches = getFallbackMatches()) {
       status: row.status,
       homeScore: row.home_score,
       awayScore: row.away_score,
+      advancingSide: row.advancing_side || null,
     };
   });
 }
 
 function mapWorldCupResults(rows) {
   return rows.reduce((acc, row) => {
-    acc[row.match_no] = { homeScore: row.home_score, awayScore: row.away_score };
+    acc[row.match_no] = {
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+      advancingSide: row.advancing_side || null,
+    };
     return acc;
   }, {});
 }
@@ -828,6 +834,10 @@ function teamName(name) {
 
 function getWorldCupResultKey(match) {
   return match?.resultId || Number(match?.fixtureId) || Number(match?.id) || match?.no;
+}
+
+function isKnockoutMatch(match) {
+  return ["R32", "R16", "QF", "SF", "THIRD", "FINAL"].includes(match?.stage);
 }
 
 function TeamLogo({ logo, name, size = "h-4 w-6" }) {
@@ -2442,27 +2452,37 @@ export default function WorldCupPredictionMVP() {
     openSnackbar(existed ? "竞猜已更新" : "竞猜提交成功");
   }
 
-  async function updateMatchResult(matchId, homeScore, awayScore) {
+  async function updateMatchResult(matchId, homeScore, awayScore, advancingSide = null) {
     if (!isAdmin || !Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return;
     const match = matches.find((item) => item.id === matchId);
     if (!match) return;
     const nextHome = Math.max(0, Math.floor(homeScore));
     const nextAway = Math.max(0, Math.floor(awayScore));
+    const nextAdvancingSide = isKnockoutMatch(match) && nextHome === nextAway && (advancingSide === "home" || advancingSide === "away")
+      ? advancingSide
+      : null;
     const resultKey = getWorldCupResultKey(match);
     const { error } = await supabase.rpc("admin_set_match_result", {
       p_match_id: matchId,
       p_match_no: resultKey,
       p_home_score: nextHome,
       p_away_score: nextAway,
+      p_advancing_side: advancingSide,
     });
     if (error) {
       showUserError(error, "match_result_save");
       return;
     }
-    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: nextHome, awayScore: nextAway, status: "settled" } : m));
+    setMatches((prev) => prev.map((m) => m.id === matchId ? {
+      ...m,
+      homeScore: nextHome,
+      awayScore: nextAway,
+      advancingSide: nextAdvancingSide,
+      status: "settled",
+    } : m));
     setWorldCupResults((prev) => ({
       ...prev,
-      [resultKey]: { homeScore: nextHome, awayScore: nextAway },
+      [resultKey]: { homeScore: nextHome, awayScore: nextAway, advancingSide: nextAdvancingSide },
     }));
     openSnackbar("比赛已结算");
   }
@@ -2480,7 +2500,13 @@ export default function WorldCupPredictionMVP() {
       showUserError(error, "match_result_clear");
       return;
     }
-    setMatches((prev) => prev.map((m) => m.id === matchId ? { ...m, homeScore: null, awayScore: null, status: "open" } : m));
+    setMatches((prev) => prev.map((m) => m.id === matchId ? {
+      ...m,
+      homeScore: null,
+      awayScore: null,
+      advancingSide: null,
+      status: "open",
+    } : m));
     setWorldCupResults((prev) => {
       const next = { ...prev };
       delete next[resultKey];
@@ -5623,11 +5649,17 @@ function AdminPanel({ matches, players, currentPlayerId, predictions, updateMatc
 function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggleLock, openDialog }) {
   const [homeScore, setHomeScore] = useState(match.homeScore ?? "");
   const [awayScore, setAwayScore] = useState(match.awayScore ?? "");
+  const [advancingSide, setAdvancingSide] = useState(match.advancingSide ?? "");
   const [expanded, setExpanded] = useState(false);
-  React.useEffect(() => { setHomeScore(match.homeScore ?? ""); setAwayScore(match.awayScore ?? ""); }, [match.homeScore, match.awayScore]);
+  React.useEffect(() => {
+    setHomeScore(match.homeScore ?? "");
+    setAwayScore(match.awayScore ?? "");
+    setAdvancingSide(match.advancingSide ?? "");
+  }, [match.homeScore, match.awayScore, match.advancingSide]);
   const canToggle = match.status !== "settled";
   const stage = STAGES[match.stage] || STAGES.GROUP;
-  const canSave = Number.isFinite(Number(homeScore)) && Number.isFinite(Number(awayScore)) && homeScore !== "" && awayScore !== "";
+  const requiresAdvancingSide = isKnockoutMatch(match) && homeScore !== "" && awayScore !== "" && Number(homeScore) === Number(awayScore);
+  const canSave = Number.isFinite(Number(homeScore)) && Number.isFinite(Number(awayScore)) && homeScore !== "" && awayScore !== "" && (!requiresAdvancingSide || Boolean(advancingSide));
   return (
     <div className="md3-panel p-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -5639,17 +5671,27 @@ function AdminMatchRow({ match, players, predictions, onResult, onClear, onToggl
           </div>
           <div className="flex flex-wrap items-center gap-2 font-black"><TeamName name={match.home} logo={match.homeLogo} /><span className="text-slate-500">vs</span><TeamName name={match.away} logo={match.awayLogo} /></div>
           <div className="mt-1 text-xs text-slate-500">{formatDateTime(match.kickoff)} · {match.city}</div>
+          {match.advancingSide && Number(match.homeScore) === Number(match.awayScore) ? (
+            <div className="mt-2 text-xs font-bold text-amber-300">晋级：{teamName(match.advancingSide === "home" ? match.home : match.away)}</div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input type="number" min="0" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} className="md3-field w-16 px-3 py-2 text-center font-black" />
           <span className="text-slate-500">:</span>
           <input type="number" min="0" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} className="md3-field w-16 px-3 py-2 text-center font-black" />
-          <M3Button disabled={!canSave} onClick={() => onResult(match.id, Number(homeScore), Number(awayScore))} className="px-3 py-2 text-sm font-black">结算</M3Button>
+          <M3Button disabled={!canSave} onClick={() => onResult(match.id, Number(homeScore), Number(awayScore), requiresAdvancingSide ? advancingSide : null)} className="px-3 py-2 text-sm font-black">结算</M3Button>
           <DarkButton disabled={!canToggle} onClick={() => openDialog?.({ title: match.status === "open" ? "锁定比赛？" : "重新开放比赛？", description: `${teamName(match.home)} vs ${teamName(match.away)} 将${match.status === "open" ? "被锁定，无法继续提交竞猜。" : "重新允许提交竞猜。"} `, confirmLabel: match.status === "open" ? "确认锁定" : "确认开放", onConfirm: () => onToggleLock(match.id) })} className="px-3 py-2 text-sm font-black">{match.status === "open" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</DarkButton>
           <DarkButton disabled={!isSettledMatch(match)} onClick={() => openDialog?.({ title: "清除比赛结果？", description: "这会移除当前比赛的已结算比分，并影响相关排行榜与成就展示。", confirmLabel: "确认清除", tone: "error", onConfirm: () => onClear(match.id) })} className="px-3 py-2 text-sm font-black">清除</DarkButton>
           {isSettledMatch(match) && <DarkButton onClick={() => setExpanded((open) => !open)} className="px-3 py-2 text-sm font-black">{expanded ? "收起得分" : "查看得分"}</DarkButton>}
         </div>
       </div>
+      {requiresAdvancingSide ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-amber-200">平局时请选择晋级球队</span>
+          <button type="button" onClick={() => setAdvancingSide("home")} className={`rounded-full px-3 py-1 text-xs font-black ${advancingSide === "home" ? "bg-emerald-500/20 text-emerald-200" : "bg-slate-900 text-slate-300"}`}>主队晋级</button>
+          <button type="button" onClick={() => setAdvancingSide("away")} className={`rounded-full px-3 py-1 text-xs font-black ${advancingSide === "away" ? "bg-emerald-500/20 text-emerald-200" : "bg-slate-900 text-slate-300"}`}>客队晋级</button>
+        </div>
+      ) : null}
       {expanded && isSettledMatch(match) && (
         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {players.map((player) => {

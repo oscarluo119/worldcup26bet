@@ -535,18 +535,28 @@ function resolvePredictionSourceTarget(sourceId, picks) {
 function resolveActualTarget(matchNo, results) {
   const match = MATCH_BY_NO[matchNo];
   const result = results[matchNo];
-  if (!match || !isSettledResult(result) || result.homeScore === result.awayScore) return "";
+  if (!match || !isSettledResult(result)) return "";
   const homeTarget = resolveActualEntrantTarget(match.homeSourceId, results);
   const awayTarget = resolveActualEntrantTarget(match.awaySourceId, results);
+  if (result.homeScore === result.awayScore) {
+    if (result.advancingSide === "home") return homeTarget;
+    if (result.advancingSide === "away") return awayTarget;
+    return "";
+  }
   return result.homeScore > result.awayScore ? homeTarget : awayTarget;
 }
 
 function resolveActualLoserTarget(matchNo, results) {
   const match = MATCH_BY_NO[matchNo];
   const result = results[matchNo];
-  if (!match || !isSettledResult(result) || result.homeScore === result.awayScore) return "";
+  if (!match || !isSettledResult(result)) return "";
   const homeTarget = resolveActualEntrantTarget(match.homeSourceId, results);
   const awayTarget = resolveActualEntrantTarget(match.awaySourceId, results);
+  if (result.homeScore === result.awayScore) {
+    if (result.advancingSide === "home") return awayTarget;
+    if (result.advancingSide === "away") return homeTarget;
+    return "";
+  }
   return result.homeScore > result.awayScore ? awayTarget : homeTarget;
 }
 
@@ -567,10 +577,21 @@ function resolveActualTeamName(matchNo, type, standings, results) {
 function resolveMatchOutcomeName(matchNo, type, standings, results) {
   const match = MATCH_BY_NO[matchNo];
   const result = results[matchNo];
-  if (!match || !isSettledResult(result) || result.homeScore === result.awayScore) return "";
-  const selectedLabel = type === "loser"
-    ? (result.homeScore > result.awayScore ? match.awayLabel : match.homeLabel)
-    : (result.homeScore > result.awayScore ? match.homeLabel : match.awayLabel);
+  if (!match || !isSettledResult(result)) return "";
+  let selectedLabel = "";
+  if (result.homeScore === result.awayScore) {
+    if (result.advancingSide === "home") {
+      selectedLabel = type === "loser" ? match.awayLabel : match.homeLabel;
+    } else if (result.advancingSide === "away") {
+      selectedLabel = type === "loser" ? match.homeLabel : match.awayLabel;
+    } else {
+      return "";
+    }
+  } else {
+    selectedLabel = type === "loser"
+      ? (result.homeScore > result.awayScore ? match.awayLabel : match.homeLabel)
+      : (result.homeScore > result.awayScore ? match.homeLabel : match.awayLabel);
+  }
   return resolveChampionRoadSlot(selectedLabel, { standings, results }).teamName || "";
 }
 
