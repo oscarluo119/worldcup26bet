@@ -333,13 +333,12 @@ describe("champion road UI integration", () => {
   });
 
   test("uses resolved knockout teams for the home next-match entry instead of raw placeholders", () => {
-    expect(appSource).toContain("const resolvedNextDeadline = useMemo(() => {");
-    expect(appSource).toContain("const matchDisplay = resolveChampionRoadScheduleMatch(nextDeadline");
-    expect(appSource).toContain("...nextDeadline,");
-    expect(appSource).toContain("home: matchDisplay.resolvedHomeName,");
-    expect(appSource).toContain("away: matchDisplay.resolvedAwayName,");
-    expect(appSource).toContain('const nextDeadlineOpponent = resolvedNextDeadline ? `${teamName(resolvedNextDeadline.home)} vs ${teamName(resolvedNextDeadline.away)}` : "当前暂无可竞猜比赛"');
-    expect(appSource).toContain("match={resolvedNextDeadline}");
+    expect(appSource).toContain("<HomePanel matches={resolvedMatches}");
+    expect(appSource).toContain("const nextDeadlineOpponent = nextDeadline ? `");
+    expect(appSource).toContain("teamName(nextDeadline.home)");
+    expect(appSource).toContain("teamName(nextDeadline.away)");
+    expect(appSource).toContain("match={nextDeadline}");
+    expect(appSource).not.toContain("const resolvedNextDeadline = useMemo(() => {");
   });
 
   test("keeps the bracket centered, height-aware, removes the background image, and tightens score-card layout", () => {

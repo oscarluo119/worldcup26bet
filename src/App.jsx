@@ -2339,6 +2339,8 @@ export default function WorldCupPredictionMVP() {
     const matchDisplay = resolveChampionRoadScheduleMatch(match, { standings: championRoadStandings, results: worldCupResults });
     return {
       ...match,
+      homeRaw: match.homeRaw || match.home || "",
+      awayRaw: match.awayRaw || match.away || "",
       home: matchDisplay.resolvedHomeName,
       away: matchDisplay.resolvedAwayName,
       searchAliases: matchDisplay.searchAliases,
@@ -2788,7 +2790,7 @@ export default function WorldCupPredictionMVP() {
         />
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
-          {activeTab === "home" && <HomePanel matches={matches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} standings={championRoadStandings} worldCupResults={worldCupResults} />}
+          {activeTab === "home" && <HomePanel matches={resolvedMatches} predictions={predictions} currentPlayerId={currentPlayerId} myStats={myStats} unPredictedCount={unPredictedCount} players={players} rankings={rankings} currentTime={currentTime} setSelectedMatchId={setSelectedMatchId} setActiveTab={setActiveTab} onOpenPlayerProfile={openPlayerProfile} achievementCollections={achievementCollections} worldCupNews={worldCupNews} newsLoading={newsLoading} onOpenNews={setSelectedNewsItem} />}
           {activeTab === "allFeatures" && <AllFeaturesPanel currentPlayerId={currentPlayerId} isAdmin={isAdmin} setActiveTab={setActiveTab} setSelectedProfilePlayerId={setSelectedProfilePlayerId} />}
           {activeTab === "completeSchedule" && <FullScheduleCalendar schedule={resolvedCompleteSchedule} source={scheduleSource} matches={worldCupTeamCardMatches} />}
           {activeTab === "worldCupStandings" && <WorldCupStandingsPanel standings={worldCupStandings} settledCount={worldCupSettledCount} matches={worldCupTeamCardMatches} />}
@@ -2800,7 +2802,7 @@ export default function WorldCupPredictionMVP() {
           {activeTab === "fun" && <FunPredictionPanel currentPlayer={currentPlayer} players={players} funPredictions={funPredictions} onSave={saveFunPrediction} locked={funPredictionLocked} firstKickoff={firstKickoff} funResults={funResults} />}
           {activeTab === "achievements" && <AchievementsPanel players={players} currentPlayerId={currentPlayerId} achievementCollections={achievementCollections} />}
           {activeTab === "ranking" && <RankingPanel players={players} rankingTrend={rankingTrend} predictionStyleRankings={predictionStyleRankings} streakRankings={streakRankings} reverseLightPlayer={reverseLightPlayer} dailyBestPlayers={dailyBestPlayers} rankings={rankings} currentPlayerId={currentPlayerId} settledCount={settledCount} onOpenPlayerProfile={openPlayerProfile} matches={matches} predictions={predictions} />}
-          {isAdmin && activeTab === "admin" && <AdminPanel matches={matches} players={players} currentPlayerId={currentPlayerId} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={resolvedSponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} onDeleteUser={deleteUser} openDialog={openDialog} />}
+          {isAdmin && activeTab === "admin" && <AdminPanel matches={resolvedMatches} players={players} currentPlayerId={currentPlayerId} predictions={predictions} updateMatchResult={updateMatchResult} clearMatchResult={clearMatchResult} toggleLock={toggleLock} funResults={funResults} onSetFunResults={saveFunResults} sponsorPredictionResults={resolvedSponsorPredictionResults} onSetSponsorPredictionResult={saveSponsorPredictionResult} onSetUserCamp={setUserCamp} onSetUserAdmin={setUserAdmin} onDeleteUser={deleteUser} openDialog={openDialog} />}
           {activeTab === "rules" && <RulesPanel />}
         </main>
       </div>
@@ -2822,20 +2824,11 @@ export default function WorldCupPredictionMVP() {
   );
 }
 
-function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections, worldCupNews, newsLoading, onOpenNews, standings, worldCupResults }) {
+function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredictedCount, rankings, currentTime, setSelectedMatchId, setActiveTab, onOpenPlayerProfile, achievementCollections, worldCupNews, newsLoading, onOpenNews }) {
   const sortedMatches = [...matches].sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const todayMatches = sortedMatches.filter((match) => isSameBeijingDate(match.kickoff, currentTime));
   const soonLockMatches = sortedMatches.filter((match) => !isMatchLocked(match, currentTime)).slice(0, 4);
   const nextDeadline = soonLockMatches[0];
-  const resolvedNextDeadline = useMemo(() => {
-    if (!nextDeadline) return null;
-    const matchDisplay = resolveChampionRoadScheduleMatch(nextDeadline, { standings, results: worldCupResults });
-    return {
-      ...nextDeadline,
-      home: matchDisplay.resolvedHomeName,
-      away: matchDisplay.resolvedAwayName,
-    };
-  }, [nextDeadline, standings, worldCupResults]);
   const myAchievementItems = achievementCollections?.currentPlayerItems || [];
   const recentAchievements = [...myAchievementItems]
     .filter((item) => item.currentPlayerProgress.achieved)
@@ -2844,7 +2837,7 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
   const rankingIndex = rankings.findIndex((player) => player.id === currentPlayerId) + 1;
   const stageMeta = nextDeadline ? (STAGES[nextDeadline.stage] || STAGES.GROUP) : (STAGES.GROUP);
   const nextDeadlineValue = nextDeadline ? `${formatDateOnly(nextDeadline.kickoff).replace("星期", "周")} ${formatBeijingTime(nextDeadline.kickoff)}` : "--";
-  const nextDeadlineOpponent = resolvedNextDeadline ? `${teamName(resolvedNextDeadline.home)} vs ${teamName(resolvedNextDeadline.away)}` : "当前暂无可竞猜比赛";
+  const nextDeadlineOpponent = nextDeadline ? `${teamName(nextDeadline.home)} vs ${teamName(nextDeadline.away)}` : "当前暂无可竞猜比赛";
 
   function openMatch(matchId) {
     setSelectedMatchId(matchId);
@@ -2869,9 +2862,9 @@ function HomePanel({ matches, predictions, currentPlayerId, myStats, unPredicted
           </div>
           <M3Button tone="outline" className="px-3 py-2 text-xs sm:text-sm" onClick={() => setActiveTab("schedule")}>全部赛程</M3Button>
         </div>
-        {resolvedNextDeadline ? (
+        {nextDeadline ? (
           <MatchFeatureCard
-            match={resolvedNextDeadline}
+            match={nextDeadline}
             pred={predictions.find((prediction) => prediction.playerId === currentPlayerId && prediction.matchId === nextDeadline.id)}
             now={currentTime}
             onClick={() => openMatch(nextDeadline.id)}
