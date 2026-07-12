@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const appSource = readFileSync(resolve(process.cwd(), "src/App.jsx"), "utf8");
+const bootstrapLoadSource = readFileSync(resolve(process.cwd(), "src/lib/supabaseBootstrapLoad.js"), "utf8");
 
 describe("schedule source bootstrap", () => {
   test("boots from the local schedule instead of WorldCupAPI", () => {
@@ -25,9 +26,10 @@ describe("schedule source bootstrap", () => {
   });
 
   test("loads predictions through paginated Supabase reads instead of a single 1000-row page", () => {
-    expect(appSource).toContain('fetchAllRows({');
-    expect(appSource).toContain('table: "predictions"');
-    expect(appSource).not.toContain('supabase.from("predictions").select("*").order("submitted_at", { ascending: true })');
+    expect(appSource).toContain('loadBootstrapCollections({');
+    expect(bootstrapLoadSource).toContain('fetchAllRows({');
+    expect(bootstrapLoadSource).toContain('table: "predictions"');
+    expect(bootstrapLoadSource).not.toContain('supabase.from("predictions").select("*").order("submitted_at", { ascending: true })');
   });
 
   test("shows the local schedule source label in the full schedule page", () => {

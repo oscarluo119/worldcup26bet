@@ -53,6 +53,7 @@ import { createProfileRecord, ensureProfileRecord } from "./lib/profileRecords";
 import { reportPredictionSubmissionDiagnostic } from "./lib/predictionDiagnostics";
 import { savePredictionWithRecovery } from "./lib/predictionSubmission";
 import { fetchAllRows } from "./lib/supabasePagination";
+import { BOOTSTRAP_PARTIAL_DATA_WARNING, loadBootstrapCollections } from "./lib/supabaseBootstrapLoad";
 import {
   ACHIEVEMENT_DEFINITIONS,
   ACHIEVEMENT_RARITIES,
@@ -1504,7 +1505,7 @@ function HeroBanner() {
   );
 }
 
-function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, setSelectedProfilePlayerId, currentPlayer, signOut, isAdmin, dataError }) {
+function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, setSelectedProfilePlayerId, currentPlayer, signOut, isAdmin, dataError, onRetryDataLoad, isRetryingData }) {
   const desktopMainTabs = visibleTabs.filter((tab) => DESKTOP_PRIMARY_NAV_IDS.includes(tab.id));
   const mobileMainTabs = visibleTabs.filter((tab) => MOBILE_PRIMARY_NAV_IDS.includes(tab.id));
   const extraTabs = visibleTabs.filter((tab) => !DESKTOP_PRIMARY_NAV_IDS.includes(tab.id) && !MOBILE_PRIMARY_NAV_IDS.includes(tab.id) && tab.id !== "admin");
@@ -1563,7 +1564,10 @@ function SideNav({ tabs: visibleTabs, activeTab, currentPlayerId, setActiveTab, 
               <LogOut className="h-4 w-4" />
               退出登录
             </M3Button>
-            {dataError ? <div className="mt-3 rounded-[18px] border px-3 py-2 text-xs" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 35%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 84%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>{dataError}</div> : null}
+            {dataError ? <div className="mt-3 rounded-[18px] border px-3 py-2 text-xs" style={{ borderColor: "color-mix(in srgb, var(--md-sys-color-error) 35%, transparent)", background: "color-mix(in srgb, var(--md-sys-color-error-container) 84%, transparent)", color: "var(--md-sys-color-on-error-container)" }}>
+              <div>{dataError}</div>
+              {onRetryDataLoad ? <M3Button tone="text" disabled={isRetryingData} onClick={onRetryDataLoad} className="mt-2 px-0 py-0 text-xs font-bold">{isRetryingData ? "正在重试..." : "重新加载数据"}</M3Button> : null}
+            </div> : null}
           </div>
           <nav className="mt-5 flex-1 overflow-auto pr-1">
             <div className="space-y-2">{desktopMainTabs.map((tab) => renderTab(tab))}</div>
@@ -1984,6 +1988,7 @@ export default function WorldCupPredictionMVP() {
   const [selectedProfilePlayerId, setSelectedProfilePlayerId] = useState("");
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("ALL");
+  const [dataReloadToken, setDataReloadToken] = useState(0);
   const baseMatchesRef = useRef(getFallbackMatches());
 
   const currentTime = useCurrentTime();
@@ -2111,72 +2116,34 @@ export default function WorldCupPredictionMVP() {
   }
 
   async function loadSupabaseData(baseMatches) {
-    const predictionsPromise = fetchAllRows({
+    const { data, warnings } = await loadBootstrapCollections({
       supabase,
-      table: "predictions",
-      orderBy: "submitted_at",
-      ascending: true,
+      fetchAllRows,
     });
 
-    const [
-      profilesResult,
-      predictionsResult,
-      funPredictionsResult,
-      championRoadPredictionsResult,
-      championRoadPredictionItemsResult,
-      sponsorPredictionsResult,
-      matchOverridesResult,
-      liveMatchStatesResult,
-      worldCupResultsResult,
-      funResultsResult,
-      sponsorPredictionResultsResult,
-    ] = await Promise.all([
-      supabase.from("profiles").select("*").order("joined_at", { ascending: true }),
-      predictionsPromise,
-      supabase.from("fun_predictions").select("*"),
-      supabase.from("champion_road_predictions").select("*"),
-      supabase.from("champion_road_prediction_items").select("*"),
-      supabase.from("sponsor_predictions").select("*"),
-      supabase.from("match_overrides").select("*"),
-      supabase.from("live_match_states").select("*"),
-      supabase.from("world_cup_results").select("*"),
-      supabase.from("fun_results").select("*").eq("id", "main").maybeSingle(),
-      supabase.from("sponsor_prediction_results").select("*"),
-    ]);
-
-    const firstError = [
-      profilesResult,
-      predictionsResult,
-      funPredictionsResult,
-      championRoadPredictionsResult,
-      championRoadPredictionItemsResult,
-      sponsorPredictionsResult,
-      matchOverridesResult,
-      liveMatchStatesResult,
-      worldCupResultsResult,
-      funResultsResult,
-      sponsorPredictionResultsResult,
-    ].find((result) => result.error)?.error;
-    if (firstError) throw firstError;
-
     const validMatchIds = new Set(baseMatches.map((match) => match.id));
-    const liveMatchStates = mapLiveMatchStates(liveMatchStatesResult.data || []);
-    const mergedMatches = mergeMatchOverrides(matchOverridesResult.data || [], baseMatches);
+    const liveMatchStates = mapLiveMatchStates(data.liveMatchStates || []);
+    const mergedMatches = mergeMatchOverrides(data.matchOverrides || [], baseMatches);
     const hydratedMatches = attachLiveMatchStates(mergedMatches, liveMatchStates);
-    setPlayers((profilesResult.data || []).map(mapProfile));
-    setPredictions((predictionsResult.data || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
-    setFunPredictions(mapFunPredictions(funPredictionsResult.data || []));
-    setChampionRoadPredictions(mapChampionRoadPredictions(championRoadPredictionsResult.data || [], championRoadPredictionItemsResult.data || []));
-    setSponsorPredictions(mapSponsorPredictions(sponsorPredictionsResult.data || []));
+    setPlayers((data.profiles || []).map(mapProfile));
+    setPredictions((data.predictions || []).map(mapPrediction).filter((prediction) => validMatchIds.has(prediction.matchId)));
+    setFunPredictions(mapFunPredictions(data.funPredictions || []));
+    setChampionRoadPredictions(mapChampionRoadPredictions(data.championRoadPredictions || [], data.championRoadPredictionItems || []));
+    setSponsorPredictions(mapSponsorPredictions(data.sponsorPredictions || []));
     setCompleteSchedule(hydratedMatches);
     setMatches(hydratedMatches);
-    setWorldCupResults(mapWorldCupResults(worldCupResultsResult.data || []));
-    setFunResults(mapFunResults(funResultsResult.data));
-    setSponsorPredictionResults(mapSponsorPredictionResults(sponsorPredictionResultsResult.data || []));
+    setWorldCupResults(mapWorldCupResults(data.worldCupResults || []));
+    setFunResults(mapFunResults(data.funResults));
+    setSponsorPredictionResults(mapSponsorPredictionResults(data.sponsorPredictionResults || []));
+    setDataError(warnings.length ? BOOTSTRAP_PARTIAL_DATA_WARNING : "");
   }
 
   async function refreshSupabaseData() {
     await loadSupabaseData(baseMatchesRef.current);
+  }
+
+  function retryDataLoad() {
+    setDataReloadToken((prev) => prev + 1);
   }
 
   React.useEffect(() => {
@@ -2227,7 +2194,7 @@ export default function WorldCupPredictionMVP() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, dataReloadToken]);
 
   React.useEffect(() => {
     if (!session?.user || !isSupabaseConfigured) return undefined;
@@ -2813,6 +2780,8 @@ export default function WorldCupPredictionMVP() {
           signOut={signOut}
           isAdmin={isAdmin}
           dataError={visibleDataError}
+          onRetryDataLoad={retryDataLoad}
+          isRetryingData={dataLoading}
         />
         <main className="min-w-0 flex-1 space-y-5">
           {activeTab === "home" ? <HeroBanner /> : null}
